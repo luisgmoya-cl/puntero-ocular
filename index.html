@@ -74,13 +74,13 @@
   <label title="Cuánto se mueve el puntero al girar la cabeza">Cabeza <input id="headGain" type="range" min="10" max="100" value="45"></label>
   <button id="demoBtn" disabled>Botones de prueba</button>
   <span id="status">Cámara apagada</span>
-  <span id="ver">v5</span>
+  <span id="ver">v6</span>
 </div>
 
 <div id="msg"><div>
   1. Pulsa <b>Activar cámara</b> y permite el acceso.<br>
-  2. Pulsa <b>Calibrar</b> (unos 40 s): <b>sigue con la mirada</b> el punto rojo mientras recorre la pantalla,
-  sin mover la cabeza. Al final aparecen 5 puntos azules para <b>medir la precisión real</b>.<br><br>
+  2. Pulsa <b>Calibrar</b> (aprox. 1 minuto, 3 pasos): mira fijamente 9 puntos rojos, luego <b>sigue con la mirada</b>
+  el punto rojo mientras recorre la pantalla, y al final 5 puntos azules <b>miden la precisión real</b>. No muevas la cabeza.<br><br>
   <b>Modo preciso:</b> mira donde quieras ir y el puntero salta allí; después
   <b>gira un poco la cabeza</b> para afinar (el puntero se vuelve azul en ese momento).<br><br>
   Luz de frente, cara centrada, a unos 50–60 cm, y la misma postura que al calibrar.
@@ -526,6 +526,25 @@ const LAG = 70;                                // retraso aproximado entre la im
 function setDot(x, y) { calDot.style.left = x + "px"; calDot.style.top = y + "px"; }
 function info(t) { $("calInfo").textContent = t; }
 
+// Fase 1: puntos fijos (datos limpios)
+async function fixations() {
+  const W = innerWidth, H = innerHeight, mx = 50, top = 110, bot = H - 50;
+  const pts = []; for (const y of [top, (top+bot)/2, bot]) for (const x of [mx, W/2, W - mx]) pts.push([x, y]);
+  pts.sort(() => Math.random() - 0.5);
+  const out = [];
+  calDot.classList.remove("val"); calDot.style.display = "block";
+  for (let i = 0; i < pts.length; i++) {
+    const [x, y] = pts[i]; setDot(x, y);
+    info(`Paso 1 de 3 · mira fijamente el centro del punto rojo (${i+1}/9)`);
+    await sleep(950);
+    collect = f => out.push({ g: f.g, p: f.p, x, y });
+    await sleep(1100);
+    collect = null;
+  }
+  return out;
+}
+
+// Fase 2: seguir un punto en movimiento (muchas muestras por toda la pantalla)
 async function pursuit() {
   const W = innerWidth, H = innerHeight, mx = 40, top = 100, bot = H - 40;
   const xs = [mx, W/2, W - mx], ys = [top, (top+bot)/2, bot];
@@ -533,18 +552,12 @@ async function pursuit() {
   ys.forEach((y,i) => { const row = i%2 ? [...xs].reverse() : xs; row.forEach(x => path.push([x,y])); });
   const xs2 = [mx, (mx + W/2)/2, W/2, (W/2 + W - mx)/2, W - mx];
   xs2.reverse().forEach((x,i) => { const col = i%2 ? [...ys].reverse() : ys; col.forEach(y => path.push([x,y])); });
-  const speed = Math.max(380, Math.min(W, H) * 0.55);   // px/s
-  const hist = [];                               // posiciones del punto en el tiempo
-  const out = [];
-  collect = f => {
-    const t = performance.now() - LAG;
-    let pos = null;
-    for (let i = hist.length - 1; i >= 0; i--) if (hist[i][0] <= t) { pos = hist[i]; break; }
-    if (pos && pos[3]) out.push({ g: f.g, p: f.p, x: pos[1], y: pos[2] });
-  };
-  setDot(...path[0]); calDot.classList.remove("val"); calDot.style.display = "block";
-  info("Mira el punto rojo y síguelo con la mirada, sin mover la cabeza");
-  await sleep(1500);
+  const speed = Math.max(420, Math.min(W, H) * 0.6);
+  const hist = [], frames = [];
+  collect = f => frames.push([performance.now(), f]);
+  setDot(...path[0]);
+  info("Paso 2 de 3 · sigue el punto rojo con la mirada, sin mover la cabeza");
+  await sleep(1000);
   for (let k = 1; k < path.length; k++) {
     const [x0,y0] = path[k-1], [x1,y1] = path[k];
     const dur = Math.hypot(x1-x0, y1-y0) / speed * 1000, t0 = performance.now();
@@ -552,40 +565,72 @@ async function pursuit() {
       const step = () => {
         const u = Math.min(1, (performance.now() - t0) / dur), e = u<.5 ? 2*u*u : 1-(-2*u+2)**2/2;
         const x = x0 + (x1-x0)*e, y = y0 + (y1-y0)*e;
-        setDot(x, y); hist.push([performance.now(), x, y, (performance.now() - t0) > 250 || k > 1]);
+        setDot(x, y); hist.push([performance.now(), x, y, (performance.now() - t0) > 200]);
         u < 1 ? requestAnimationFrame(step) : res();
       };
       step();
     });
-    const tp = performance.now();                // pequeña pausa en cada esquina
-    while (performance.now() - tp < 350) { hist.push([performance.now(), x1, y1, true]); await sleep(16); }
-    info(`Sigue el punto… ${Math.round(k / (path.length-1) * 100)} %`);
+    const tp = performance.now();
+    while (performance.now() - tp < 300) { hist.push([performance.now(), x1, y1, true]); await sleep(16); }
+    info(`Paso 2 de 3 · sigue el punto… ${Math.round(k / (path.length-1) * 100)} %`);
   }
   collect = null;
+  return { hist, frames };
+}
+// Asigna a cada fotograma la posición que tenía el punto "lag" ms antes
+function pursuitSamples(P, lag) {
+  const H = P.hist, out = []; let j = 0;
+  for (const [t, f] of P.frames) {
+    const tt = t - lag;
+    while (j < H.length - 1 && H[j+1][0] <= tt) j++;
+    if (H[j] && H[j][0] <= tt && H[j][3]) out.push({ g: f.g, p: f.p, x: H[j][1], y: H[j][2] });
+  }
   return out;
 }
 
-async function validate(m) {
+// Fase 3: puntos de prueba que no se usan para entrenar
+async function validation() {
   const W = innerWidth, H = innerHeight;
-  const pts = [[W/2, H/2], [W*0.25, H*0.3+30], [W*0.75, H*0.3+30], [W*0.25, H*0.75], [W*0.75, H*0.75]];
-  const errs = [], extra = [];
+  const pts = [[W/2, H/2+20], [W*0.27, H*0.33+20], [W*0.73, H*0.33+20], [W*0.27, H*0.75], [W*0.73, H*0.75]];
+  const sets = [];
   calDot.classList.add("val");
   for (let i = 0; i < pts.length; i++) {
     const [x, y] = pts[i]; setDot(x, y);
-    info(`Prueba de precisión: mira fijamente el punto azul (${i+1}/5)`);
+    info(`Paso 3 de 3 · prueba de precisión: mira fijamente el punto azul (${i+1}/5)`);
     await sleep(900);
-    const got = [];
-    collect = f => { got.push(f); };
+    const frames = [];
+    collect = f => frames.push(f);
     await sleep(1300);
     collect = null;
-    const preds = got.map(f => predict(m, f)).filter(Boolean);
-    if (preds.length >= 5) {
-      const med = k => preds.map(p => p[k]).sort((a,b)=>a-b)[preds.length>>1];
-      errs.push(Math.hypot(med(0) - x, med(1) - y));
-    }
-    got.forEach(f => extra.push({ g: f.g, p: f.p, x, y }));
+    sets.push({ x, y, frames });
   }
-  return { err: errs.length ? errs.reduce((a,b)=>a+b,0) / errs.length : null, extra };
+  return sets;
+}
+function valError(m, sets) {
+  const errs = [];
+  for (const s of sets) {
+    const preds = s.frames.map(f => predict(m, f)).filter(Boolean);
+    if (preds.length < 5) continue;
+    const med = k => preds.map(p => p[k]).sort((a,b)=>a-b)[preds.length>>1];
+    errs.push(Math.hypot(med(0) - s.x, med(1) - s.y));
+  }
+  return errs.length ? errs.reduce((a,b)=>a+b,0) / errs.length : Infinity;
+}
+// Ajusta todos los modelos candidatos y elige el que menos falla en los puntos de prueba
+function selectModel(train, sets) {
+  const tx = train.map(s => s.x), ty = train.map(s => s.y), idx = [...Array(train.length).keys()];
+  let best = null;
+  for (const usePatch of (train[0].p ? [false, true] : [false])) {
+    const rows = train.map(s => vec(s, usePatch));
+    const { mu, sd } = standardize(rows);
+    const G = gram(rows.map(r => r.map((v,j) => (v - mu[j]) / sd[j])), idx, tx, ty);
+    for (const lam of [1, 10, 100, 1000, 10000]) {
+      const m = { ...ridge(G, lam), mu, sd, lam, usePatch };
+      const e = valError(m, sets);
+      if (!best || e < best.err) best = { err: e, m };
+    }
+  }
+  return best;
 }
 
 $("calBtn").onclick = async () => {
@@ -593,27 +638,38 @@ $("calBtn").onclick = async () => {
   $("msg").style.display = "none"; $("result").style.display = "none";
   pointer.style.display = "none"; $("calBtn").disabled = true; $("calInfo").style.display = "block";
   trackMsg = ""; statusEl.textContent = "Calibrando…";
-  const data = await pursuit();
-  if (data.length < 120) { finishCal(); return showResult("bad", "Calibración fallida",
-    "Apenas he podido ver tus ojos durante la calibración. Ponte de frente, con más luz, y repítela."); }
+  const fix = await fixations();
+  const P = await pursuit();
+  const sets = await validation();
   info("Calculando…"); await sleep(30);
-  const m = fitModel(data);
-  const v = await validate(m);
+  if (fix.length + P.frames.length < 150) { finishCal(); return showResult("bad", "Calibración fallida",
+    "Apenas he podido ver tus ojos durante la calibración. Ponte de frente, con más luz, y repítela."); }
+  // 1) retraso de la mirada al seguir el punto: se elige el que mejor encaja
+  let bestLag = 100, bestLagErr = Infinity;
+  for (const lag of [0, 50, 100, 150, 200, 250, 300]) {
+    const m = fitModel([...fix, ...pursuitSamples(P, lag)], { lam: 100, usePatch: false });
+    const e = valError(m, sets);
+    if (e < bestLagErr) { bestLagErr = e; bestLag = lag; }
+  }
+  // 2) los puntos fijos cuentan doble: son los datos más limpios
+  const train = [...fix, ...fix, ...pursuitSamples(P, bestLag)];
+  const best = selectModel(train, sets);
   finishCal();
-  samples = data.concat(v.extra);
-  model = fitModel(samples, { lam: m.lam, usePatch: m.usePatch });
-  model.valErr = v.err;
+  // 3) modelo final con todos los datos (incluidos los de prueba)
+  const valSamples = sets.flatMap(s => s.frames.map(f => ({ g: f.g, p: f.p, x: s.x, y: s.y })));
+  samples = [...train, ...valSamples];
+  model = fitModel(samples, { lam: best.m.lam, usePatch: best.m.usePatch });
+  model.valErr = best.err; model.lag = bestLag;
   save("eye5_model", model);
   gx.reset(); gy.reset(); px = innerWidth/2; py = innerHeight/2;
-  const e = v.err ?? m.cv, diag = Math.hypot(innerWidth, innerHeight), pct = e / diag * 100;
-  const level = pct < 9 ? "good" : pct < 15 ? "mid" : "bad";
+  const e = best.err, diag = Math.hypot(innerWidth, innerHeight), pct = e / diag * 100;
+  const level = pct < 7 ? "good" : pct < 12 ? "mid" : "bad";
   trackMsg = `Siguiendo · error medido ≈ ${Math.round(e)} px`;
   showResult(level,
     level === "good" ? "✅ Calibración buena" : level === "mid" ? "⚠️ Calibración aceptable" : "❌ Calibración imprecisa",
-    `En la prueba, la mirada estimada quedó a unos ${Math.round(e)} px del punto real (${pct.toFixed(0)} % de la pantalla). ` +
-    (level === "bad" ? "Repítela siguiendo el punto con la mirada y sin mover la cabeza; mejora mucho con buena luz de frente."
-      : "En el modo preciso, usa la mirada para llegar a la zona y gira un poco la cabeza para afinar.") +
-    (m.usePatch ? "" : " (Se usó solo la geometría del ojo: la imagen de los ojos no ayudaba con esta luz.)"));
+    `En la prueba, la mirada estimada quedó a unos ${Math.round(e)} px del punto real (${pct.toFixed(0)} % de la diagonal). ` +
+    (level === "bad" ? "Repítela con la cabeza apoyada o muy quieta, luz de frente y la cara centrada en la cámara."
+      : "En el modo preciso, usa la mirada para llegar a la zona y gira un poco la cabeza para afinar."));
 };
 function finishCal() { collect = null; calDot.style.display = "none"; $("calInfo").style.display = "none"; $("calBtn").disabled = false; }
 function showResult(level, title, text) {
