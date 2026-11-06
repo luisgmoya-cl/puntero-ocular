@@ -5,39 +5,42 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Puntero con los ojos</title>
 <style>
-  :root { --bg:#0f1115; --fg:#e8eaf0; --muted:#8a90a0; --acc:#4ade80; --card:#1a1d24; }
+  :root { --bg:#0f1115; --fg:#e8eaf0; --muted:#8a90a0; --acc:#4ade80; --card:#1a1d24; --line:#2c313c; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
     font-family:system-ui,-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
-  #bar { position:fixed; top:0; left:0; right:0; display:flex; gap:12px; align-items:center;
-    padding:12px 16px; background:#0f1115cc; backdrop-filter:blur(6px); z-index:5; }
-  #bar h1 { font-size:16px; margin:0 12px 0 0; font-weight:600; }
-  button { background:var(--card); color:var(--fg); border:1px solid #2c313c; border-radius:8px;
-    padding:8px 14px; font-size:14px; cursor:pointer; }
-  button:hover { border-color:var(--acc); }
-  #status { color:var(--muted); font-size:13px; margin-left:auto; }
-  #cam { position:fixed; right:16px; bottom:16px; width:200px; border-radius:10px;
-    transform:scaleX(-1); opacity:.85; border:1px solid #2c313c; z-index:4; }
-  #pointer { position:fixed; width:28px; height:28px; margin:-14px 0 0 -14px; border-radius:50%;
-    border:3px solid var(--acc); box-shadow:0 0 14px var(--acc); pointer-events:none; z-index:10;
-    display:none; }
-  #pointer .ring { position:absolute; inset:-3px; border-radius:50%; }
-  #calDot { position:fixed; width:26px; height:26px; margin:-13px 0 0 -13px; border-radius:50%;
-    background:#f87171; box-shadow:0 0 0 8px #f8717133; display:none; z-index:9; transition:transform .2s; }
-  #calDot.collect { background:#facc15; box-shadow:0 0 0 8px #facc1533; transform:scale(.6); }
+  #bar { position:fixed; top:0; left:0; right:0; display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center;
+    padding:10px 16px; background:#0f1115e6; backdrop-filter:blur(6px); z-index:5; border-bottom:1px solid var(--line); }
+  #bar h1 { font-size:16px; margin:0 6px 0 0; font-weight:600; }
+  button, select { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:8px;
+    padding:7px 12px; font-size:14px; cursor:pointer; font-family:inherit; }
+  button:hover:not(:disabled), select:hover { border-color:var(--acc); }
+  button:disabled { opacity:.5; cursor:default; }
+  label { font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  input[type=range] { width:110px; accent-color:var(--acc); }
+  #status { color:var(--muted); font-size:13px; margin-left:auto; max-width:420px; }
+  #cam { position:fixed; right:16px; bottom:16px; width:180px; border-radius:10px;
+    transform:scaleX(-1); opacity:.85; border:1px solid var(--line); z-index:4; }
+  #pointer { position:fixed; width:30px; height:30px; margin:-15px 0 0 -15px; border-radius:50%;
+    border:3px solid var(--acc); box-shadow:0 0 14px var(--acc); pointer-events:none; z-index:10; display:none; }
+  #pointer.fix { background:#4ade8033; }
+  #calDot { position:fixed; width:28px; height:28px; margin:-14px 0 0 -14px; border-radius:50%;
+    background:#f87171; box-shadow:0 0 0 10px #f8717133; display:none; z-index:9; transition:transform .25s, background .25s; }
+  #calDot.collect { background:#facc15; box-shadow:0 0 0 10px #facc1533; transform:scale(.45); }
+  #calDot::after { content:""; position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px;
+    background:#000; border-radius:50%; }
   #msg { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
     text-align:center; pointer-events:none; z-index:3; padding:24px; }
-  #msg div { max-width:560px; color:var(--muted); line-height:1.6; font-size:16px; }
+  #msg div { max-width:600px; color:var(--muted); line-height:1.6; font-size:16px; }
   #msg b { color:var(--fg); }
-  #targets { position:fixed; inset:70px 240px 70px 40px; display:grid;
-    grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr); gap:28px; z-index:2;
-    visibility:hidden; }
-  .t { background:var(--card); border:2px solid #2c313c; border-radius:16px; display:flex;
+  #targets { position:fixed; inset:90px 220px 40px 40px; display:grid;
+    grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr); gap:28px; z-index:2; visibility:hidden; }
+  .t { background:var(--card); border:2px solid var(--line); border-radius:16px; display:flex;
     align-items:center; justify-content:center; font-size:22px; position:relative; overflow:hidden;
     transition:border-color .15s, background .15s; }
   .t.hover { border-color:var(--acc); }
   .t.done { background:#14532d; }
-  .t .fill { position:absolute; left:0; bottom:0; height:4px; background:var(--acc); width:0; }
+  .t .fill { position:absolute; left:0; bottom:0; height:5px; background:var(--acc); width:0; }
 </style>
 </head>
 <body>
@@ -45,15 +48,26 @@
   <h1>👁️ Puntero con los ojos</h1>
   <button id="startBtn">Activar cámara</button>
   <button id="calBtn" disabled>Calibrar</button>
-  <button id="demoBtn" disabled>Mostrar botones de prueba</button>
+  <label>Control
+    <select id="mode">
+      <option value="both">Ojos + cabeza (recomendado)</option>
+      <option value="eyes">Solo ojos</option>
+      <option value="head">Solo cabeza (el más estable)</option>
+    </select>
+  </label>
+  <label>Suavizado <input id="smooth" type="range" min="0" max="100" value="60"></label>
+  <label>Zona quieta <input id="dead" type="range" min="0" max="150" value="60"></label>
+  <button id="demoBtn" disabled>Botones de prueba</button>
   <span id="status">Cámara apagada</span>
 </div>
 
 <div id="msg"><div>
-  Pulsa <b>Activar cámara</b> y permite el acceso.<br>
-  Luego pulsa <b>Calibrar</b>: aparecerán 9 puntos rojos, uno tras otro. Mira cada punto
-  <b>solo con los ojos</b> (intenta no mover la cabeza) hasta que cambie al siguiente.<br><br>
-  Consejo: buena luz de frente, cara centrada y a unos 50 cm de la pantalla.
+  1. Pulsa <b>Activar cámara</b> y permite el acceso.<br>
+  2. Pulsa <b>Calibrar</b>: aparecerán 9 puntos. Mira fijamente el <b>centro negro</b> de cada uno
+  hasta que salte al siguiente (unos 3 segundos por punto).<br><br>
+  Si el puntero tiembla, sube <b>Suavizado</b> o <b>Zona quieta</b>. Si no llega a los bordes,
+  prueba el modo <b>Ojos + cabeza</b> o <b>Solo cabeza</b> (no hace falta recalibrar al cambiar de modo).<br><br>
+  Consejo: luz de frente, cara centrada, a unos 50 cm, y la cabeza en la misma postura que al calibrar.
 </div></div>
 
 <div id="targets"></div>
@@ -218,20 +232,57 @@ P("FACEMESH_TESSELATION",[[127,34],[34,139],[139,127],[11,0],[0,37],[37,11],[232
 const $ = id => document.getElementById(id);
 const video = $("cam"), pointer = $("pointer"), calDot = $("calDot"), statusEl = $("status");
 let landmarker = null, running = false, lastVideoTime = -1;
-let feat = null;            // última característica [h, v] de los iris
-let model = null;           // coeficientes de calibración
+let feat = null;               // [h, v, yaw, pitch] del fotograma actual
+let calRows = null;            // muestras de calibración: [h, v, yaw, pitch, x, y]
+let model = null;              // modelo ajustado para el modo actual
 let calibrating = false, calSamples = [];
-let px = innerWidth/2, py = innerHeight/2;  // posición suavizada
+let px = innerWidth/2, py = innerHeight/2;
+const MODES = { eyes:[0,1], head:[2,3], both:[0,1,2,3] };
+const save = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const load = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
 
-try { model = JSON.parse(localStorage.getItem("eyeModel")); } catch {}
+// ---- Ajustes del usuario ----
+for (const id of ["mode","smooth","dead"]) {
+  const v = load("eye_" + id); if (v != null) $(id).value = v;
+  $(id).addEventListener("input", () => { save("eye_" + id, $(id).value); if (id === "mode") refit(); });
+}
+calRows = load("eye_calRows");
 
-// Posición del iris relativa a las esquinas del ojo (independiente de mover la cabeza en el plano)
-function eyeFeature(lm, cornerA, cornerB, irisIdx) {
-  const a = lm[cornerA], b = lm[cornerB], i = lm[irisIdx];
+// ---- Características de la cara ----
+function eyeFeature(lm, cA, cB, iris) {
+  const a = lm[cA], b = lm[cB], i = lm[iris];
   const ax = b.x - a.x, ay = b.y - a.y, len2 = ax*ax + ay*ay;
   const dx = i.x - a.x, dy = i.y - a.y;
   return [ (dx*ax + dy*ay) / len2, (ax*dy - ay*dx) / len2 ];
 }
+function irisCenter(lm, start) {        // media de los 5 puntos del iris: más estable que solo el centro
+  let x=0, y=0; for (let k=0;k<5;k++){ x+=lm[start+k].x; y+=lm[start+k].y; }
+  return { x:x/5, y:y/5 };
+}
+function features(lm) {
+  const L = lm.slice(); L[900] = irisCenter(lm, 468); L[901] = irisCenter(lm, 473);
+  const e1 = eyeFeature(L, 33, 133, 900), e2 = eyeFeature(L, 362, 263, 901);
+  const l = lm[234], r = lm[454], top = lm[10], bot = lm[152], nose = lm[1];
+  const yaw = (nose.x - (l.x + r.x)/2) / (r.x - l.x);
+  const pitch = (nose.y - (top.y + bot.y)/2) / (bot.y - top.y);
+  return [(e1[0]+e2[0])/2, (e1[1]+e2[1])/2, yaw, pitch];
+}
+
+// ---- Filtro One Euro: quita el temblor sin añadir mucho retraso ----
+class OneEuro {
+  constructor(minCutoff, beta) { this.minCutoff = minCutoff; this.beta = beta; this.x = null; this.dx = 0; this.t = 0; }
+  alpha(cutoff, dt) { const r = 2*Math.PI*cutoff*dt; return r/(r+1); }
+  filter(x, t) {
+    if (this.x === null) { this.x = x; this.t = t; return x; }
+    const dt = Math.max(1e-3, (t - this.t)/1000); this.t = t;
+    const dx = (x - this.x)/dt;
+    this.dx += this.alpha(1, dt) * (dx - this.dx);
+    const cutoff = this.minCutoff + this.beta * Math.abs(this.dx);
+    this.x += this.alpha(cutoff, dt) * (x - this.x);
+    return this.x;
+  }
+}
+const fx = new OneEuro(1, 0.01), fy = new OneEuro(1, 0.01);
 
 async function loop() {
   if (!running) return;
@@ -243,30 +294,42 @@ async function loop() {
 }
 
 function onResults(res) {
-    const lm = res.multiFaceLandmarks?.[0];
-    if (lm && lm.length >= 478) {
-      const L = eyeFeature(lm, 33, 133, 468);   // ojo izquierdo de la imagen
-      const R = eyeFeature(lm, 362, 263, 473);  // ojo derecho de la imagen
-      feat = [(L[0]+R[0])/2, (L[1]+R[1])/2];
-      if (calibrating) calSamples.push(feat);
-      if (model && !calibrating) movePointer();
-      statusEl.textContent = model ? "Siguiendo tus ojos" : "Cara detectada · falta calibrar";
-    } else {
-      feat = null;
-      statusEl.textContent = "No veo tu cara";
-    }
+  const lm = res.multiFaceLandmarks?.[0];
+  if (lm && lm.length >= 478) {
+    feat = features(lm);
+    if (calibrating) calSamples.push(feat);
+    else if (model) movePointer();
+    if (!calibrating && !model) statusEl.textContent = "Cara detectada · pulsa Calibrar";
+  } else {
+    feat = null;
+    statusEl.textContent = "No veo tu cara";
+  }
 }
 
+let fixX = px, fixY = py;
 function movePointer() {
-  const [h, v] = feat;
-  const tx = model.x[0]*h + model.x[1]*v + model.x[2];
-  const ty = model.y[0]*h + model.y[1]*v + model.y[2];
-  // Suavizado adaptativo: lento si el cambio es pequeño (quita temblor), rápido si es grande
-  const d = Math.hypot(tx - px, ty - py);
-  const k = Math.min(0.5, 0.06 + d / 1500);
-  px += (tx - px) * k; py += (ty - py) * k;
-  px = Math.max(0, Math.min(innerWidth, px));
-  py = Math.max(0, Math.min(innerHeight, py));
+  const idx = MODES[$("mode").value];
+  const f = idx.map((k,j) => (feat[k] - model.mu[j]) / model.sd[j]);
+  let tx = model.x[idx.length], ty = model.y[idx.length];
+  f.forEach((v,j) => { tx += model.x[j]*v; ty += model.y[j]*v; });
+
+  // Suavizado: más suavizado = frecuencia de corte más baja
+  const s = $("smooth").value / 100;
+  fx.minCutoff = fy.minCutoff = 2.5 * Math.pow(0.04, s);   // de 2.5 Hz a 0.1 Hz
+  fx.beta = fy.beta = 0.004 * (1 - s) + 0.0005;
+  const now = performance.now();
+  tx = fx.filter(tx, now); ty = fy.filter(ty, now);
+
+  // Zona quieta: si la mirada se queda cerca, el puntero no se mueve
+  const dead = +$("dead").value;
+  const d = Math.hypot(tx - fixX, ty - fixY);
+  if (d > dead) {               // salto real: seguimos la mirada
+    fixX += (tx - fixX) * (1 - dead / d);
+    fixY += (ty - fixY) * (1 - dead / d);
+    pointer.classList.remove("fix");
+  } else pointer.classList.add("fix");
+  px = Math.max(0, Math.min(innerWidth, fixX));
+  py = Math.max(0, Math.min(innerHeight, fixY));
   pointer.style.display = "block";
   pointer.style.left = px + "px"; pointer.style.top = py + "px";
   checkTargets();
@@ -283,17 +346,18 @@ $("startBtn").onclick = async () => {
     await landmarker.initialize();
     statusEl.textContent = "Pidiendo acceso a la cámara…";
     if (!navigator.mediaDevices?.getUserMedia)
-      throw new Error("este navegador no permite usar la cámara aquí. Descarga el archivo y ábrelo en Chrome o Edge.");
+      throw new Error("este navegador no permite usar la cámara aquí.");
     video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
     await video.play();
     running = true; loop();
     $("calBtn").disabled = false; $("demoBtn").disabled = false;
     $("startBtn").textContent = "Cámara activa";
+    if (calRows) { refit(); }
   } catch (e) {
     console.error(e);
     const n = e && e.name;
     statusEl.textContent =
-      n === "NotAllowedError" ? "Cámara bloqueada: si la abriste en la vista previa del chat, descárgala y ábrela en Chrome. Si no, permite la cámara en el icono de la barra de direcciones y en los ajustes de privacidad del sistema." :
+      n === "NotAllowedError" ? "Cámara bloqueada: permite la cámara en el icono de la barra de direcciones y en los ajustes de privacidad del sistema." :
       n === "NotFoundError" ? "No encuentro ninguna cámara conectada." :
       n === "NotReadableError" ? "La cámara está siendo usada por otra aplicación (Zoom, Teams…). Ciérrala y vuelve a intentarlo." :
       "Error: " + (e.message || e);
@@ -301,53 +365,75 @@ $("startBtn").onclick = async () => {
   }
 };
 
-// ---- Calibración de 9 puntos + ajuste por mínimos cuadrados ----
+// ---- Calibración: 9 puntos, se descarta el principio y los valores atípicos ----
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 $("calBtn").onclick = async () => {
   $("msg").style.display = "none";
   pointer.style.display = "none";
-  const m = 60, W = innerWidth, H = innerHeight;
-  const xs = [m, W/2, W-m], ys = [m+50, H/2, H-m];
+  $("calBtn").disabled = true;
+  const W = innerWidth, H = innerHeight, mx = W*0.06, top = 90, bot = H*0.06;
+  const xs = [mx, W/2, W-mx], ys = [top, (top + H-bot)/2, H-bot];
   const pts = []; for (const y of ys) for (const x of xs) pts.push([x, y]);
+  pts.sort(() => Math.random() - 0.5);        // orden aleatorio: evita que la mirada "se adelante"
   const rows = [];
   calDot.style.display = "block";
-  for (const [x, y] of pts) {
+  for (let n = 0; n < pts.length; n++) {
+    const [x, y] = pts[n];
+    statusEl.textContent = `Calibrando: mira el centro del punto (${n+1}/9)`;
     calDot.style.left = x + "px"; calDot.style.top = y + "px";
     calDot.classList.remove("collect");
-    await sleep(1100);                 // tiempo para que los ojos lleguen al punto
+    await sleep(1200);
     calDot.classList.add("collect");
     calSamples = []; calibrating = true;
-    await sleep(1200);                 // recogida de muestras
+    await sleep(1800);
     calibrating = false;
-    if (calSamples.length) {
-      const med = i => calSamples.map(s => s[i]).sort((a,b)=>a-b)[calSamples.length>>1];
-      rows.push([med(0), med(1), x, y]);
+    if (calSamples.length >= 5) {
+      const robust = k => {                     // media del 50 % central
+        const v = calSamples.map(s => s[k]).sort((a,b)=>a-b);
+        const q = v.slice(Math.floor(v.length*0.25), Math.ceil(v.length*0.75));
+        return q.reduce((a,b)=>a+b,0) / q.length;
+      };
+      rows.push([robust(0), robust(1), robust(2), robust(3), x, y]);
     }
   }
   calDot.style.display = "none";
-  if (rows.length < 6) { statusEl.textContent = "Calibración fallida: no se veía bien tu cara"; return; }
-  model = { x: fit(rows, 2), y: fit(rows, 3) };
-  try { localStorage.setItem("eyeModel", JSON.stringify(model)); } catch {}
-  px = W/2; py = H/2;
+  $("calBtn").disabled = false;
+  if (rows.length < 7) { statusEl.textContent = "Calibración fallida: no se veía bien tu cara. Repite con más luz."; return; }
+  calRows = rows; save("eye_calRows", rows);
+  fx.x = fy.x = null; fixX = W/2; fixY = H/2;
+  refit();
 };
 
-// Regresión lineal: target = a*h + b*v + c
-function fit(rows, col) {
-  const A = [[0,0,0],[0,0,0],[0,0,0]], B = [0,0,0];
-  for (const r of rows) {
-    const f = [r[0], r[1], 1];
-    for (let i=0;i<3;i++){ B[i] += f[i]*r[col]; for (let j=0;j<3;j++) A[i][j] += f[i]*f[j]; }
-  }
-  return solve3(A, B);
+// Regresión lineal con regularización (ridge) sobre características normalizadas
+function refit() {
+  if (!calRows) return;
+  const idx = MODES[$("mode").value], n = idx.length;
+  const mu = idx.map(k => calRows.reduce((a,r)=>a+r[k],0)/calRows.length);
+  const sd = idx.map((k,j) => Math.sqrt(calRows.reduce((a,r)=>a+(r[k]-mu[j])**2,0)/calRows.length) || 1e-6);
+  const X = calRows.map(r => [...idx.map((k,j)=>(r[k]-mu[j])/sd[j]), 1]);
+  const fitCol = col => {
+    const m = n + 1, A = Array.from({length:m},()=>Array(m).fill(0)), B = Array(m).fill(0);
+    X.forEach((f,i) => { for (let a=0;a<m;a++){ B[a] += f[a]*calRows[i][col]; for (let b=0;b<m;b++) A[a][b] += f[a]*f[b]; } });
+    for (let a=0;a<n;a++) A[a][a] += 0.3;      // regularización: evita valores disparados
+    return solve(A, B);
+  };
+  model = { mu, sd, x: fitCol(4), y: fitCol(5) };
+  // Error medio de la calibración, para orientar al usuario
+  const err = Math.sqrt(X.reduce((a,f,i) => {
+    let ex = 0, ey = 0; f.forEach((v,j)=>{ ex += model.x[j]*v; ey += model.y[j]*v; });
+    return a + (ex - calRows[i][4])**2 + (ey - calRows[i][5])**2;
+  }, 0) / X.length);
+  const quality = err < 80 ? "buena" : err < 160 ? "regular" : "mala, conviene repetir";
+  statusEl.textContent = `Siguiendo · precisión ${quality} (±${Math.round(err)} px)`;
 }
-function solve3(A, b) {
-  const M = A.map((r,i)=>[...r, b[i]]);
-  for (let i=0;i<3;i++){
-    let p=i; for(let k=i+1;k<3;k++) if(Math.abs(M[k][i])>Math.abs(M[p][i])) p=k;
+function solve(A, b) {
+  const n = b.length, M = A.map((r,i)=>[...r, b[i]]);
+  for (let i=0;i<n;i++){
+    let p=i; for(let k=i+1;k<n;k++) if(Math.abs(M[k][i])>Math.abs(M[p][i])) p=k;
     [M[i],M[p]]=[M[p],M[i]];
-    for(let k=0;k<3;k++) if(k!==i){ const f=M[k][i]/M[i][i]; for(let j=i;j<4;j++) M[k][j]-=f*M[i][j]; }
+    for(let k=0;k<n;k++) if(k!==i){ const f=M[k][i]/M[i][i]; for(let j=i;j<=n;j++) M[k][j]-=f*M[i][j]; }
   }
-  return M.map((r,i)=>r[3]/r[i]);
+  return M.map((r,i)=>r[n]/r[i]);
 }
 
 // ---- Botones de prueba: se "pulsan" mirándolos 1,5 s ----
@@ -367,7 +453,7 @@ function checkTargets() {
     const inside = px>=r.left && px<=r.right && py>=r.top && py<=r.bottom;
     t.classList.toggle("hover", inside);
     t._dwell = inside ? t._dwell + dt : 0;
-    t.querySelector(".fill").style.width = Math.min(100, t._dwell/DWELL*100) + "%";
+    t.querySelector(".fill").style.width = Math.max(0, Math.min(100, t._dwell/DWELL*100)) + "%";
     if (t._dwell >= DWELL) { t.classList.toggle("done"); t._dwell = -800; }
   }
 }
@@ -375,7 +461,6 @@ $("demoBtn").onclick = () => {
   const show = targetsEl.style.visibility !== "visible";
   targetsEl.style.visibility = show ? "visible" : "hidden";
   $("msg").style.display = "none";
-  $("demoBtn").textContent = show ? "Ocultar botones de prueba" : "Mostrar botones de prueba";
 };
 </script>
 </body>
