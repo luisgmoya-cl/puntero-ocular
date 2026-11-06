@@ -74,7 +74,8 @@
   <label title="Cuánto se mueve el puntero al girar la cabeza">Cabeza <input id="headGain" type="range" min="10" max="100" value="45"></label>
   <button id="demoBtn" disabled>Botones de prueba</button>
   <span id="status">Cámara apagada</span>
-  <span id="ver">v7 · red neuronal</span>
+  <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600"></span>
+  <span id="ver">v7.1 · red neuronal</span>
 </div>
 
 <div id="msg"><div>
@@ -263,7 +264,8 @@ function onWorker(e) {
   const d = e.data;
   if (d.type !== "result") return;
   busy = false;
-  fpsCount++; if (performance.now() - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = performance.now(); }
+  fpsCount++; if (performance.now() - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = performance.now();
+    const el = $("fps"); el.textContent = `⚡ ${fps} img/s`; el.style.color = fps >= 15 ? "var(--acc)" : fps >= 8 ? "var(--warn)" : "var(--bad)"; }
   if (!d.face) { cur = null; if (!collect) statusEl.textContent = d.error ? "Error del motor: " + d.error : "No veo tu cara"; return; }
   handleFrame(features(d));
 }
