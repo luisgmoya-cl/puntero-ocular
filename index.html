@@ -33,6 +33,14 @@
     text-align:center; pointer-events:none; z-index:3; padding:24px; }
   #msg div { max-width:600px; color:var(--muted); line-height:1.6; font-size:16px; }
   #msg b { color:var(--fg); }
+  #result { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:var(--card);
+    border:2px solid var(--acc); border-radius:16px; padding:28px 36px; text-align:center; z-index:11;
+    display:none; max-width:520px; box-shadow:0 20px 60px #000a; }
+  #result h2 { margin:0 0 10px; font-size:26px; }
+  #result p { margin:6px 0; color:var(--muted); line-height:1.5; }
+  #result .row { display:flex; gap:10px; justify-content:center; margin-top:18px; }
+  #result.bad { border-color:#f87171; }
+  #ver { font-size:11px; color:var(--muted); }
   #targets { position:fixed; inset:90px 220px 40px 40px; display:grid;
     grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr); gap:28px; z-index:2; visibility:hidden; }
   .t { background:var(--card); border:2px solid var(--line); border-radius:16px; display:flex;
@@ -59,6 +67,7 @@
   <label>Zona quieta <input id="dead" type="range" min="0" max="150" value="60"></label>
   <button id="demoBtn" disabled>Botones de prueba</button>
   <span id="status">Cámara apagada</span>
+  <span id="ver">v4</span>
 </div>
 
 <div id="msg"><div>
@@ -73,6 +82,8 @@
 <div id="targets"></div>
 <video id="cam" autoplay playsinline muted></video>
 <div id="calDot"></div>
+<div id="result"><h2 id="resTitle"></h2><p id="resText"></p>
+  <div class="row"><button id="resOk">Empezar a usarlo</button><button id="resAgain">Repetir calibración</button></div></div>
 <div id="pointer"></div>
 
 <script type="application/octet-stream" data-asset="face_mesh.binarypb">CmIKJENvbnN0YW50U2lkZVBhY2tldENhbGN1bGF0b3JOdW1GYWNlcxIcQ29uc3RhbnRTaWRlUGFja2V0Q2FsY3VsYXRvcjIQUEFDS0VUOm51bV9mYWNlczoKqtDy1ggECgIIAQpwCitDb25zdGFudFNpZGVQYWNrZXRDYWxjdWxhdG9yUmVmaW5lTGFuZG1hcmtzEhxDb25zdGFudFNpZGVQYWNrZXRDYWxjdWxhdG9yMhdQQUNLRVQ6cmVmaW5lX2xhbmRtYXJrczoKqtDy1ggECgIYAApPEhJHbFNjYWxlckNhbGN1bGF0b3IaFlZJREVPOmlucHV0X2ZyYW1lc19ncHUiF1ZJREVPOmltYWdlX3RyYW5zZm9ybWVkOgiy6dT6BAIoAAqFARIURmFjZUxhbmRtYXJrRnJvbnRHcHUaF0lNQUdFOmltYWdlX3RyYW5zZm9ybWVkIh5MQU5ETUFSS1M6bXVsdGlfZmFjZV9sYW5kbWFya3MqE05VTV9GQUNFUzpudW1fZmFjZXMqH1dJVEhfQVRURU5USU9OOnJlZmluZV9sYW5kbWFya3MKlgESIUZhY2VHZW9tZXRyeUZyb21MYW5kbWFya3NBbmRJbWFnZRoXSU1BR0U6aW1hZ2VfdHJhbnNmb3JtZWQaL01VTFRJX0ZBQ0VfTEFORE1BUktTOm11bHRpX2ZhY2VfbGFuZG1hcmtzX2dhdGVkIidNVUxUSV9GQUNFX0dFT01FVFJZOm11bHRpX2ZhY2VfZ2VvbWV0cnkKZgoaRW5hYmxlRmFjZUdlb21ldHJ5Q29uc3RhbnQSHENvbnN0YW50U2lkZVBhY2tldENhbGN1bGF0b3IyHlBBQ0tFVDpmYWNlX2dlb21ldHJ5X29uX3BhY2tldDoKqtDy1ggECgIYAApsEhxTaWRlUGFja2V0VG9TdHJlYW1DYWxjdWxhdG9yGhlUSUNLOm11bHRpX2ZhY2VfbGFuZG1hcmtzIhhBVF9USUNLOmZhY2VfZ2VvbWV0cnlfb24qF2ZhY2VfZ2VvbWV0cnlfb25fcGFja2V0CloSDkdhdGVDYWxjdWxhdG9yGhRtdWx0aV9mYWNlX2xhbmRtYXJrcxoWQUxMT1c6ZmFjZV9nZW9tZXRyeV9vbiIabXVsdGlfZmFjZV9sYW5kbWFya3NfZ2F0ZWRSEGlucHV0X2ZyYW1lc19ncHVYZHIbEhlBcHBsaWNhdGlvblRocmVhZEV4ZWN1dG9y</script>
@@ -298,7 +309,7 @@ function onResults(res) {
   if (lm && lm.length >= 478) {
     feat = features(lm);
     if (calibrating) calSamples.push(feat);
-    else if (model) movePointer();
+    else if (model) { movePointer(); if (trackMsg && statusEl.textContent !== trackMsg) statusEl.textContent = trackMsg; }
     if (!calibrating && !model) statusEl.textContent = "Cara detectada · pulsa Calibrar";
   } else {
     feat = null;
@@ -307,6 +318,7 @@ function onResults(res) {
 }
 
 let fixX = px, fixY = py;
+let trackMsg = "";
 function movePointer() {
   const idx = MODES[$("mode").value];
   const f = idx.map((k,j) => (feat[k] - model.mu[j]) / model.sd[j]);
@@ -398,10 +410,17 @@ $("calBtn").onclick = async () => {
   }
   calDot.style.display = "none";
   $("calBtn").disabled = false;
-  if (rows.length < 7) { statusEl.textContent = "Calibración fallida: no se veía bien tu cara. Repite con más luz."; return; }
+  if (rows.length < 7) {
+    showResult(false, "Calibración fallida", "No se veía bien tu cara durante la calibración. Ponte de frente, con más luz, y repítela.");
+    return;
+  }
   calRows = rows; save("eye_calRows", rows);
   fx.x = fy.x = null; fixX = W/2; fixY = H/2;
-  refit();
+  const err = refit();
+  const good = err < 160;
+  showResult(good, good ? "✅ Calibración terminada" : "⚠️ Calibración poco precisa",
+    `Precisión ${err < 80 ? "buena" : err < 160 ? "regular" : "mala"}: el puntero puede desviarse unos ${Math.round(err)} píxeles.` +
+    (good ? " Ya puedes mover el puntero con la mirada." : " Repítela mirando fijamente el puntito negro de cada punto y con la cabeza quieta."));
 };
 
 // Regresión lineal con regularización (ridge) sobre características normalizadas
@@ -424,8 +443,17 @@ function refit() {
     return a + (ex - calRows[i][4])**2 + (ey - calRows[i][5])**2;
   }, 0) / X.length);
   const quality = err < 80 ? "buena" : err < 160 ? "regular" : "mala, conviene repetir";
-  statusEl.textContent = `Siguiendo · precisión ${quality} (±${Math.round(err)} px)`;
+  trackMsg = `Siguiendo · precisión ${quality} (±${Math.round(err)} px)`;
+  statusEl.textContent = trackMsg;
+  return err;
 }
+function showResult(good, title, text) {
+  $("resTitle").textContent = title; $("resText").textContent = text;
+  $("result").classList.toggle("bad", !good); $("result").style.display = "block";
+  calibrating = false;
+}
+$("resOk").onclick = () => { $("result").style.display = "none"; };
+$("resAgain").onclick = () => { $("result").style.display = "none"; $("calBtn").click(); };
 function solve(A, b) {
   const n = b.length, M = A.map((r,i)=>[...r, b[i]]);
   for (let i=0;i<n;i++){
