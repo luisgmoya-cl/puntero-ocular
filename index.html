@@ -74,8 +74,8 @@
   <label title="Cuánto se mueve el puntero al girar la cabeza">Cabeza <input id="headGain" type="range" min="10" max="100" value="45"></label>
   <button id="demoBtn" disabled>Botones de prueba</button>
   <span id="status">Cámara apagada</span>
-  <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600"></span>
-  <span id="ver">v7.1 · red neuronal</span>
+  <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600;cursor:help"></span>
+  <span id="ver">v7.2 · red neuronal</span>
 </div>
 
 <div id="msg"><div>
@@ -244,28 +244,43 @@ const hx = new OneEuro(1.2, 0.5), hy = new OneEuro(1.2, 0.5);        // cabeza
 let openRef = null;
 
 // ---------------------------------------------------------------- bucle de vídeo
-let worker = null, busy = false;
-const fcan = document.createElement("canvas"), fctx = fcan.getContext("2d", { willReadFrequently: true });
+// Varios motores (Web Workers) en paralelo: cada fotograma nuevo va al primer motor libre.
+const workers = [];                            // { w, busy }
+let lastDispatchedTime = -1, lastResultT = 0, engineInfo = "";
+async function dispatch() {
+  if (!running || !video.videoWidth) return;
+  if (video.currentTime === lastDispatchedTime) return;
+  const wk = workers.find(x => !x.busy); if (!wk) return;
+  lastDispatchedTime = video.currentTime;
+  wk.busy = true;
+  const t = performance.now();
+  try {
+    const sc = Math.min(1, 960 / video.videoWidth);
+    const bitmap = await createImageBitmap(video, { resizeWidth: Math.round(video.videoWidth * sc), resizeHeight: Math.round(video.videoHeight * sc) });
+    wk.w.postMessage({ type: "frame", payload: { bitmap, t } }, [bitmap]);
+  } catch (e) { wk.busy = false; }
+}
 function pump() {
   if (!running) return;
-  if (!busy && video.readyState >= 2 && video.videoWidth) {
-    const sc = Math.min(1, 960 / video.videoWidth);
-    const w = Math.round(video.videoWidth * sc), h = Math.round(video.videoHeight * sc);
-    if (fcan.width !== w || fcan.height !== h) { fcan.width = w; fcan.height = h; }
-    fctx.drawImage(video, 0, 0, w, h);
-    const frame = fctx.getImageData(0, 0, w, h);
-    busy = true;
-    worker.postMessage({ type: "frame", payload: { frame, t: performance.now() } }, [frame.data.buffer]);
-  }
-  requestAnimationFrame(pump);
+  dispatch();
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(pump); else requestAnimationFrame(pump);
 }
-let fpsCount = 0, fpsT = performance.now(), fps = 0;
-function onWorker(e) {
+let fpsCount = 0, fpsT = performance.now(), fps = 0, msAvg = null;
+function onWorker(wk, e) {
   const d = e.data;
   if (d.type !== "result") return;
-  busy = false;
-  fpsCount++; if (performance.now() - fpsT > 1000) { fps = fpsCount; fpsCount = 0; fpsT = performance.now();
-    const el = $("fps"); el.textContent = `⚡ ${fps} img/s`; el.style.color = fps >= 15 ? "var(--acc)" : fps >= 8 ? "var(--warn)" : "var(--bad)"; }
+  wk.busy = false;
+  dispatch();                                  // si hay un fotograma esperando, que no espere al siguiente
+  if (d.ms) { window.__ms = d.ms; msAvg = msAvg ? Object.fromEntries(Object.keys(d.ms).map(k => [k, (msAvg[k] ?? d.ms[k]) * 0.9 + d.ms[k] * 0.1])) : { ...d.ms }; }
+  if (d.t < lastResultT) return;               // llegó tarde: ya hay uno más reciente
+  lastResultT = d.t;
+  fpsCount++;
+  if (performance.now() - fpsT > 1000) {
+    fps = fpsCount; fpsCount = 0; fpsT = performance.now();
+    const el = $("fps"); el.textContent = `⚡ ${fps} img/s`;
+    el.style.color = fps >= 20 ? "var(--acc)" : fps >= 10 ? "var(--warn)" : "var(--bad)";
+    if (msAvg) el.title = `${engineInfo}\nPor imagen: copiar ${msAvg.copy|0} ms · cara ${msAvg.face|0} ms · ojos ${msAvg.prep|0} ms · red ${msAvg.net|0} ms · total ${msAvg.total|0} ms`;
+  }
   if (!d.face) { cur = null; if (!collect) statusEl.textContent = d.error ? "Error del motor: " + d.error : "No veo tu cara"; return; }
   handleFrame(features(d));
 }
@@ -329,17 +344,22 @@ $("startBtn").onclick = async () => {
   try {
     statusEl.textContent = "Pidiendo acceso a la cámara…";
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("este navegador no permite usar la cámara aquí.");
-    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } });
+    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } } });
     await video.play();
-    statusEl.textContent = "Cargando la red neuronal (unos 15 MB la primera vez)…";
-    worker = new Worker("gaze-worker.js");
-    const ready = new Promise((res, rej) => {
-      worker.onmessage = e => { if (e.data.type === "ready") res(e.data); else if (e.data.type === "error") rej(new Error(e.data.message)); };
-      worker.onerror = ev => rej(new Error(ev.message || "no se pudo cargar el motor"));
-    });
-    worker.postMessage({ type: "init", payload: { baseUrl: new URL(".", location.href).href } });
-    await ready;
-    worker.onmessage = onWorker;
+    const nWorkers = Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 4) / 3)));
+    statusEl.textContent = `Cargando la red neuronal en ${nWorkers} motor${nWorkers > 1 ? "es" : ""} (unos 15 MB la primera vez)…`;
+    const baseUrl = new URL(".", location.href).href;
+    const infos = await Promise.all(Array.from({ length: nWorkers }, () => new Promise((res, rej) => {
+      const w = new Worker("gaze-worker.js"), wk = { w, busy: false };
+      w.onmessage = e => {
+        if (e.data.type === "ready") { w.onmessage = ev => onWorker(wk, ev); workers.push(wk); res(e.data); }
+        else if (e.data.type === "error") rej(new Error(e.data.message));
+      };
+      w.onerror = ev => rej(new Error(ev.message || "no se pudo cargar el motor"));
+      w.postMessage({ type: "init", payload: { baseUrl } });
+    })));
+    const st = video.srcObject.getVideoTracks()[0].getSettings();
+    engineInfo = `${nWorkers} motores · cámara ${st.width}x${st.height} a ${Math.round(st.frameRate || 0)} img/s · red en ${infos[0].backend} · cara en ${infos[0].delegate}`;
     running = true; pump();
     $("calBtn").disabled = false; $("demoBtn").disabled = false;
     $("startBtn").textContent = "Cámara activa";
