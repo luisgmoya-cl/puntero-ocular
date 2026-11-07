@@ -107,6 +107,7 @@
   <button class="tab active" id="tabPointer">🎯 Puntero</button>
   <button class="tab" id="tabGame">🧟 Zombis</button>
   <button id="startBtn">Activar cámara</button>
+  <label title="Elige la cámara del portátil o una externa">📷 <select id="camSel" style="max-width:190px"><option value="">Cámara predeterminada</option></select></label>
   <button id="calBtn" disabled>Calibrar</button>
   <label>Control
     <select id="mode">
@@ -125,7 +126,7 @@
   <label title="Más bajo = basta con una sonrisa más pequeña. La barra muestra cuánto sonríes ahora">😊 Sonrisa <input id="smileThr" type="range" min="4" max="50" value="14"> <span class="track mini"><span id="smileBar2"></span></span></label>
   <span id="status">Cámara apagada</span>
   <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600;cursor:help"></span>
-  <span id="ver">v9 · lupa</span>
+  <span id="ver">v9.1 · cámaras</span>
 </div>
 
 <div id="msg"><div>
@@ -189,7 +190,7 @@ for (const id of ["mode","smooth","jump","headGain"]) {
   const v = load("eye7_" + id); if (v != null) $(id).value = v;
   $(id).addEventListener("input", () => save("eye7_" + id, $(id).value));
 }
-model = load("eye7_model");
+
 
 // ---------------------------------------------------------------- características
 // El motor (gaze-worker.js) devuelve, por fotograma: la estimación de la red neuronal BlazeGaze
@@ -418,12 +419,55 @@ function movePointer(f) {
 
 // ---------------------------------------------------------------- cámara
 // ---------------------------------------------------------------- cámara y motor
+// ---------------------------------------------------------------- elegir cámara
+// Cada cámara guarda su propia calibración (están en sitios distintos).
+let camId = load("eye7_camId") || "";
+const modelKey = () => "eye7_model_" + (camId || "default");
+const camConstraints = () => ({ video: { ...(camId ? { deviceId: { exact: camId } } : {}),
+  width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } } });
+async function listCams() {
+  try {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+    const sel = $("camSel"), curId = video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId || camId;
+    sel.innerHTML = devs.map((d, i) => `<option value="${d.deviceId}">${(d.label || "Cámara " + (i+1)).replace(/</g, "&lt;")}</option>`).join("")
+      || `<option value="">Cámara predeterminada</option>`;
+    if (curId && devs.some(d => d.deviceId === curId)) sel.value = curId;
+  } catch {}
+}
+function updateEngineInfo() {
+  const st = video.srcObject?.getVideoTracks()[0]?.getSettings() || {};
+  engineInfo = `${workers.length} motores · cámara ${st.width}x${st.height} a ${Math.round(st.frameRate || 0)} img/s · ${engineBase}`;
+}
+let engineBase = "";
+$("camSel").addEventListener("change", async () => {
+  camId = $("camSel").value; save("eye7_camId", camId);
+  if (!video.srcObject) return;                       // aún sin activar: se usará al pulsar Activar cámara
+  try {
+    video.srcObject.getTracks().forEach(t => t.stop());
+    video.srcObject = await navigator.mediaDevices.getUserMedia(camConstraints());
+    await video.play();
+    lastDispatchedTime = -1;
+    updateEngineInfo();
+    model = load(modelKey()); samples = []; gx.reset(); gy.reset(); fixX = fixY = null;
+    trackMsg = model ? `Cámara cambiada · uso su calibración guardada (error ≈ ${Math.round(model.valErr || 0)} px)` : "";
+    statusEl.textContent = model ? trackMsg : "Cámara cambiada · pulsa Calibrar para esta cámara";
+    pointer.style.display = model ? "block" : "none";
+  } catch (e) { statusEl.textContent = "No se pudo abrir esa cámara: " + (e.message || e.name); }
+});
+navigator.mediaDevices?.addEventListener?.("devicechange", listCams);
+listCams();
+
+
 $("startBtn").onclick = async () => {
   $("startBtn").disabled = true;
   try {
     statusEl.textContent = "Pidiendo acceso a la cámara…";
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("este navegador no permite usar la cámara aquí.");
-    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } } });
+    try { video.srcObject = await navigator.mediaDevices.getUserMedia(camConstraints()); }
+    catch (e) { if (camId && (e.name === "OverconstrainedError" || e.name === "NotFoundError")) { camId = ""; video.srcObject = await navigator.mediaDevices.getUserMedia(camConstraints()); } else throw e; }
+    camId = video.srcObject.getVideoTracks()[0].getSettings().deviceId || camId; save("eye7_camId", camId);
+    model = load(modelKey()) || load("eye7_model");   // la calibración de antes vale para la primera cámara
+    listCams();
     await video.play();
     const nWorkers = Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 4) / 3)));
     statusEl.textContent = `Cargando la red neuronal en ${nWorkers} motor${nWorkers > 1 ? "es" : ""} (unos 15 MB la primera vez)…`;
@@ -437,8 +481,7 @@ $("startBtn").onclick = async () => {
       w.onerror = ev => rej(new Error(ev.message || "no se pudo cargar el motor"));
       w.postMessage({ type: "init", payload: { baseUrl } });
     })));
-    const st = video.srcObject.getVideoTracks()[0].getSettings();
-    engineInfo = `${nWorkers} motores · cámara ${st.width}x${st.height} a ${Math.round(st.frameRate || 0)} img/s · red en ${infos[0].backend} · cara en ${infos[0].delegate}`;
+    engineBase = `red en ${infos[0].backend} · cara en ${infos[0].delegate}`; updateEngineInfo();
     running = true; pump();
     $("calBtn").disabled = false; $("demoBtn").disabled = false;
     $("startBtn").textContent = "Cámara activa";
@@ -595,7 +638,7 @@ $("calBtn").onclick = async () => {
   samples = [...train, ...valSamples];
   model = fitModel(samples, { lam: best.m.lam, usePatch: best.m.usePatch });
   model.valErr = best.err; model.lag = bestLag;
-  save("eye7_model", model);
+  save(modelKey(), model);
   gx.reset(); gy.reset(); px = innerWidth/2; py = innerHeight/2; fixX = fixY = null; offX = offY = 0;
   const e = best.err, diag = Math.hypot(innerWidth, innerHeight), pct = e / diag * 100;
   const level = pct < 7 ? "good" : pct < 12 ? "mid" : "bad";
