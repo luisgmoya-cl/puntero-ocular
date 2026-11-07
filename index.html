@@ -26,6 +26,7 @@
     border:3px solid var(--acc); box-shadow:0 0 12px var(--acc); pointer-events:none; z-index:10; display:none; }
   #pointer::after { content:""; position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px;
     background:var(--acc); border-radius:50%; }
+  #gazeDot { position:fixed; width:10px; height:10px; margin:-5px 0 0 -5px; border-radius:50%; background:#f8717199; pointer-events:none; z-index:10; display:none; }
   #pointer.fine { border-color:#60a5fa; box-shadow:0 0 12px #60a5fa; }
   #pointer.fine::after { background:#60a5fa; }
   #calDot { position:fixed; width:30px; height:30px; margin:-15px 0 0 -15px; border-radius:50%;
@@ -69,13 +70,14 @@
       <option value="head">Solo cabeza</option>
     </select>
   </label>
-  <label title="Cuánto suaviza el movimiento del puntero">Suavizado <input id="smooth" type="range" min="0" max="100" value="55"></label>
-  <label title="Distancia que tiene que saltar tu mirada para que el puntero salte con ella">Salto <input id="jump" type="range" min="60" max="400" value="170"></label>
+  <label title="Cuánto tiempo promedia la mirada mientras miras un punto. Más alto = más estable pero más lento">Suavizado <input id="smooth" type="range" min="0" max="100" value="40"></label>
+  <label title="Distancia mínima que tiene que saltar tu mirada para que el puntero salte con ella. Más alto = puntero más quieto">Salto <input id="jump" type="range" min="40" max="300" value="110"></label>
   <label title="Cuánto se mueve el puntero al girar la cabeza">Cabeza <input id="headGain" type="range" min="10" max="100" value="45"></label>
   <button id="demoBtn" disabled>Botones de prueba</button>
+  <label title="Muestra un punto rojo con la estimación de la mirada sin filtrar"><input id="showGaze" type="checkbox"> Ver mirada</label>
   <span id="status">Cámara apagada</span>
   <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600;cursor:help"></span>
-  <span id="ver">v7.2 · red neuronal</span>
+  <span id="ver">v7.3 · red neuronal</span>
 </div>
 
 <div id="msg"><div>
@@ -95,6 +97,7 @@
 <div id="result"><h2 id="resTitle"></h2><p id="resText"></p>
   <div class="row"><button id="resOk">Empezar a usarlo</button><button id="resAgain">Repetir calibración</button></div></div>
 <div id="pointer"></div>
+<div id="gazeDot"></div>
 
 <script type="module">
 /* =====================================================================
@@ -122,6 +125,7 @@ const save = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catc
 const load = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
 
 for (const id of ["mode","smooth","jump","headGain"]) {
+  if ((id === "jump" || id === "smooth") && load("eye7_v73_" + id) !== 1) { save("eye7_v73_" + id, 1); try { localStorage.removeItem("eye7_" + id); } catch {} }
   const v = load("eye7_" + id); if (v != null) $(id).value = v;
   $(id).addEventListener("input", () => save("eye7_" + id, $(id).value));
 }
@@ -298,10 +302,17 @@ function handleFrame(f) {
 }
 
 // ---------------------------------------------------------------- puntero
-let px = innerWidth/2, py = innerHeight/2, farSince = 0, prevHead = null;
+let px = innerWidth/2, py = innerHeight/2, prevHead = null;
+const gazeDot = $("gazeDot"); let showGaze = false;
+$("showGaze").onchange = () => { showGaze = $("showGaze").checked; if (!showGaze) gazeDot.style.display = "none"; };
+// Puntero basado en fijaciones: el ojo no se mueve de forma continua, sino a saltos (sacadas)
+// entre puntos donde se queda quieto (fijaciones). Durante una fijación promediamos la estimación
+// (quita el temblor); cuando detectamos una sacada, el puntero salta al nuevo punto.
+let fixX = null, fixY = null, offX = 0, offY = 0, farCount = 0, lastMoveT = 0;
 function movePointer(f) {
   const now = performance.now(), mode = $("mode").value;
   const s = $("smooth").value / 100;
+  const dt = lastMoveT ? Math.min(200, now - lastMoveT) : 16; lastMoveT = now;
   // cabeza: movimiento relativo (como un ratón de cabeza)
   const hxv = hx.filter(f.yaw2, now), hyv = hy.filter(f.pitch2, now);
   let dHx = 0, dHy = 0;
@@ -317,20 +328,23 @@ function movePointer(f) {
   } else {
     if (f.blink) return;
     const g = predict(model, f); if (!g) return;
-    gx.minCutoff = gy.minCutoff = 2.5 * Math.pow(0.05, s);
-    gx.beta = gy.beta = 0.004 * (1 - s) + 0.0004;
+    // filtro ligero solo para quitar el ruido de cada imagen
+    gx.minCutoff = gy.minCutoff = 4; gx.beta = gy.beta = 0.01;
     const tx = gx.filter(g[0], now), ty = gy.filter(g[1], now);
-    if (mode === "gaze") {
-      const dead = 20 + s * 80, d = Math.hypot(tx - px, ty - py);
-      if (d > dead) { px += (tx - px) * (1 - dead/d); py += (ty - py) * (1 - dead/d); }
+    if (showGaze) { gazeDot.style.display = "block"; gazeDot.style.left = g[0] + "px"; gazeDot.style.top = g[1] + "px"; }
+    if (fixX === null) { fixX = tx; fixY = ty; }
+    const jump = +$("jump").value;
+    if (Math.hypot(tx - fixX, ty - fixY) > jump) farCount++; else farCount = 0;
+    if (farCount >= 3) {                       // sacada confirmada (3 imágenes seguidas lejos)
+      fixX = tx; fixY = ty; farCount = 0; offX = offY = 0;
       pointer.classList.remove("fine");
     } else {
-      // híbrido: la mirada salta a la zona, la cabeza afina
-      const jump = +$("jump").value, d = Math.hypot(tx - px, ty - py);
-      if (d > jump) { if (!farSince) farSince = now; } else farSince = 0;
-      if (farSince && now - farSince > 140) { px = tx; py = ty; farSince = 0; pointer.classList.remove("fine"); }
-      else if (headMoving) { px += headDx; py += headDy; pointer.classList.add("fine"); }
+      // fijación: media móvil; "Suavizado" decide cuánto tiempo promedia (80–900 ms)
+      const tau = 80 + s * 820, a = 1 - Math.exp(-dt / tau);
+      fixX += (tx - fixX) * a; fixY += (ty - fixY) * a;
     }
+    if (mode === "hybrid" && headMoving) { offX += headDx; offY += headDy; pointer.classList.add("fine"); }
+    px = fixX + offX; py = fixY + offY;
   }
   px = Math.max(0, Math.min(innerWidth, px)); py = Math.max(0, Math.min(innerHeight, py));
   pointer.style.display = "block"; pointer.style.left = px + "px"; pointer.style.top = py + "px";
@@ -517,7 +531,7 @@ $("calBtn").onclick = async () => {
   model = fitModel(samples, { lam: best.m.lam, usePatch: best.m.usePatch });
   model.valErr = best.err; model.lag = bestLag;
   save("eye7_model", model);
-  gx.reset(); gy.reset(); px = innerWidth/2; py = innerHeight/2;
+  gx.reset(); gy.reset(); px = innerWidth/2; py = innerHeight/2; fixX = fixY = null; offX = offY = 0;
   const e = best.err, diag = Math.hypot(innerWidth, innerHeight), pct = e / diag * 100;
   const level = pct < 7 ? "good" : pct < 12 ? "mid" : "bad";
   trackMsg = `Siguiendo · error medido ≈ ${Math.round(e)} px`;
