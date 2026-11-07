@@ -126,7 +126,7 @@
   <label title="Más bajo = basta con una sonrisa más pequeña. La barra muestra cuánto sonríes ahora">😊 Sonrisa <input id="smileThr" type="range" min="4" max="50" value="14"> <span class="track mini"><span id="smileBar2"></span></span></label>
   <span id="status">Cámara apagada</span>
   <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600;cursor:help"></span>
-  <span id="ver">v9.1 · cámaras</span>
+  <span id="ver">v10 · IA</span>
 </div>
 
 <div id="msg"><div>
@@ -212,16 +212,39 @@ function features(r) {
   const open = (dist(lm[159], lm[145]) / dist(lm[33], lm[133]) + dist(lm[386], lm[374]) / dist(lm[362], lm[263])) / 2;
   const g = [r.pog[0], r.pog[1], hL, vL, hR, vR, r.head[0], r.head[1], r.head[2],
              r.origin[0] / 50, r.origin[1] / 50, r.origin[2] / 60];
-  return { g, p: 1, open, yaw2, pitch2, t: r.t, smile: r.smile };
+  return { g, p: 1, d: r.deep || null, open, yaw2, pitch2, t: r.t, smile: r.smile };
 }
-// Vector para la regresión. "all" = red neuronal + geometría del iris; si no, solo red neuronal + cabeza.
-function vec(s, all) {
+// ---------------------------------------------------------------- modelos de calibración
+// Tipos de entrada (fs):
+//   "cnn"  = salida de la red + pose de la cabeza
+//   "all"  = lo anterior + geometría del iris
+//   "deep" = lo anterior + las 32 neuronas internas de la red (IA personalizada)
+// Y opcionalmente "rff": versión no lineal (regresión con núcleo gaussiano aproximado
+// mediante características aleatorias de Fourier).
+function baseVec(s, fs) {
   const g = s.g, a = g[0], b = g[1];
   const cnn = [a, b, a*a, b*b, a*b, g[6], g[7], g[8], g[9], g[10], g[11], a*g[6], b*g[7]];
-  if (!all) return cnn;
-  const h = (g[2]+g[4])/2, v = (g[3]+g[5])/2;
-  return [...cnn, g[2], g[3], g[4], g[5], h*h, v*v, h*v];
+  if (fs === "cnn") return cnn;
+  if (fs === "all") { const h = (g[2]+g[4])/2, v = (g[3]+g[5])/2; return [...cnn, g[2], g[3], g[4], g[5], h*h, v*v, h*v]; }
+  if (fs === "deep") return s.d ? [...cnn, ...s.d] : null;
+  return null;
 }
+const fsOf = m => m.fs || (m.usePatch ? "all" : "cnn");   // compatibilidad con calibraciones antiguas
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function makeRff(rows, D, gamma, seed) {
+  const d = rows[0].length, { mu, sd } = standardize(rows), R = rng(seed);
+  const gauss = () => Math.sqrt(-2 * Math.log(R() + 1e-12)) * Math.cos(2 * Math.PI * R());
+  const scale = Math.sqrt(2 * gamma / d);
+  const W = Array.from({ length: D }, () => Array.from({ length: d }, () => gauss() * scale));
+  const b = Array.from({ length: D }, () => R() * 2 * Math.PI);
+  return { mu0: mu, sd0: sd, W, b, D, gamma };
+}
+function rffMap(F, r) {
+  const z = r.map((v, j) => (v - F.mu0[j]) / F.sd0[j]), out = new Array(F.D), k = Math.sqrt(2 / F.D);
+  for (let i = 0; i < F.D; i++) { let s = F.b[i]; const w = F.W[i]; for (let j = 0; j < z.length; j++) s += w[j] * z[j]; out[i] = k * Math.cos(s); }
+  return out;
+}
+function rowOf(m, s) { let r = baseVec(s, fsOf(m)); if (!r) return null; if (m.rff) r = rffMap(m.rff, r); return r; }
 
 // ---------------------------------------------------------------- regresión ridge
 function solveSPD(A, b) {                     // Cholesky
@@ -242,7 +265,7 @@ function standardize(rows) {
   for (let j=0;j<d;j++) sd[j] = Math.sqrt(sd[j]) || 1;
   return { mu, sd };
 }
-function gram(Z, idx, tx, ty) {                // Z ya normalizada (sin columna de 1)
+function gram(Z, idx, tx, ty) {
   const d = Z[0].length, A = Array.from({length:d}, () => new Float64Array(d)), bx = new Float64Array(d), by = new Float64Array(d);
   let mx = 0, my = 0; for (const i of idx) { mx += tx[i]; my += ty[i]; } mx /= idx.length; my /= idx.length;
   for (const i of idx) { const z = Z[i];
@@ -255,41 +278,29 @@ function ridge(G, lam) {
   for (let a=0;a<d;a++) A[a][a] += lam;
   return { wx: solveSPD(A, Array.from(G.bx)), wy: solveSPD(A, Array.from(G.by)), bx: G.mx, by: G.my };
 }
-function fitModel(list, fixed) {
-  const usePatchOptions = fixed ? [fixed.usePatch] : (list[0].p ? [false, true] : [false]);
-  const lams = fixed ? [fixed.lam] : [0.3, 3, 30, 300, 3000];
-  const tx = list.map(s => s.x), ty = list.map(s => s.y);
-  let best = null;
-  for (const usePatch of usePatchOptions) {
-    const rows = list.map(s => vec(s, usePatch));
-    const { mu, sd } = standardize(rows);
-    const Z = rows.map(r => r.map((v,j) => (v - mu[j]) / sd[j]));
-    if (!fixed) {
-      // validación cruzada por bloques consecutivos (las muestras seguidas se parecen mucho)
-      const K = 5, n = list.length, folds = [];
-      for (let k=0;k<K;k++) folds.push([...Array(n).keys()].filter(i => Math.floor(i*K/n) === k));
-      const errs = lams.map(() => 0);
-      for (let k=0;k<K;k++) {
-        const G = gram(Z, folds.filter((_,j)=>j!==k).flat(), tx, ty);
-        lams.forEach((lam, li) => {
-          const m = ridge(G, lam);
-          for (const i of folds[k]) { const p = predictZ(m, Z[i]); errs[li] += Math.hypot(p[0]-tx[i], p[1]-ty[i]) / n; }
-        });
-      }
-      lams.forEach((lam, li) => { if (!best || errs[li] < best.cv) best = { cv: errs[li], lam, usePatch }; });
-    } else best = { cv: null, lam: fixed.lam, usePatch };
-    if (best.usePatch === usePatch) {
-      const m = ridge(gram(Z, [...Array(list.length).keys()], tx, ty), best.lam);
-      best.model = { ...m, mu, sd, lam: best.lam, usePatch, cv: best.cv };
-    }
-  }
-  return best.model;
+// Prepara la matriz normalizada y su "gram" para un tipo de modelo
+function prepare(list, spec) {
+  const usable = list.filter(s => baseVec(s, spec.fs));
+  let rows = usable.map(s => baseVec(s, spec.fs));
+  if (spec.rff && !spec.rff.W) spec = { ...spec, rff: makeRff(rows, spec.rff.D, spec.rff.gamma, spec.rff.seed) };
+  if (spec.rff) rows = rows.map(r => rffMap(spec.rff, r));
+  const { mu, sd } = standardize(rows);
+  const Z = rows.map(r => r.map((v,j) => (v - mu[j]) / sd[j]));
+  return { spec, mu, sd, G: gram(Z, [...Array(Z.length).keys()], usable.map(s => s.x), usable.map(s => s.y)) };
+}
+// Ajusta un modelo con una configuración fija ({fs, rff, lam})
+function fitModel(list, cfg) {
+  const fs = cfg.fs || (cfg.usePatch ? "all" : "cnn");
+  const P = prepare(list, { fs, rff: cfg.rff || null });
+  return { ...ridge(P.G, cfg.lam), mu: P.mu, sd: P.sd, lam: cfg.lam, fs, rff: P.spec.rff };
 }
 function predictZ(m, z) { let x = m.bx, y = m.by; for (let j=0;j<z.length;j++){ x += m.wx[j]*z[j]; y += m.wy[j]*z[j]; } return [x, y]; }
 function predict(m, s) {
-  const r = vec(s, m.usePatch); if (m.usePatch && !s.p) return null;
+  const r = rowOf(m, s); if (!r) return null;
   return predictZ(m, r.map((v,j) => (v - m.mu[j]) / m.sd[j]));
 }
+const MODEL_NAMES = { cnn: "red neuronal + cabeza", all: "red neuronal + cabeza + iris", deep: "IA personalizada (lineal)", rff: "IA personalizada no lineal" };
+const nameOf = m => m.rff ? MODEL_NAMES.rff : MODEL_NAMES[fsOf(m)];
 
 // ---------------------------------------------------------------- filtros
 class OneEuro {
@@ -475,7 +486,7 @@ $("startBtn").onclick = async () => {
     const infos = await Promise.all(Array.from({ length: nWorkers }, () => new Promise((res, rej) => {
       const w = new Worker("gaze-worker.js?v=81"), wk = { w, busy: false };
       w.onmessage = e => {
-        if (e.data.type === "ready") { w.onmessage = ev => onWorker(wk, ev); workers.push(wk); res(e.data); }
+        if (e.data.type === "ready") { if (e.data.featErr) console.warn("featErr: " + e.data.featErr); w.onmessage = ev => onWorker(wk, ev); workers.push(wk); res(e.data); }
         else if (e.data.type === "error") rej(new Error(e.data.message));
       };
       w.onerror = ev => rej(new Error(ev.message || "no se pudo cargar el motor"));
@@ -515,7 +526,7 @@ async function fixations() {
     const [x, y] = pts[i]; setDot(x, y);
     info(`Paso 1 de 3 · mira fijamente el centro del punto rojo (${i+1}/9)`);
     await sleep(950);
-    collect = f => out.push({ g: f.g, p: f.p, x, y });
+    collect = f => out.push({ g: f.g, p: f.p, d: f.d, x, y });
     await sleep(1100);
     collect = null;
   }
@@ -561,7 +572,7 @@ function pursuitSamples(P, lag) {
   for (const [t, f] of P.frames) {
     const tt = t - lag;
     while (j < H.length - 1 && H[j+1][0] <= tt) j++;
-    if (H[j] && H[j][0] <= tt && H[j][3]) out.push({ g: f.g, p: f.p, x: H[j][1], y: H[j][2] });
+    if (H[j] && H[j][0] <= tt && H[j][3]) out.push({ g: f.g, p: f.p, d: f.d, x: H[j][1], y: H[j][2] });
   }
   return out;
 }
@@ -594,21 +605,29 @@ function valError(m, sets) {
   }
   return errs.length ? errs.reduce((a,b)=>a+b,0) / errs.length : Infinity;
 }
-// Ajusta todos los modelos candidatos y elige el que menos falla en los puntos de prueba
-function selectModel(train, sets) {
-  const tx = train.map(s => s.x), ty = train.map(s => s.y), idx = [...Array(train.length).keys()];
-  let best = null;
-  for (const usePatch of (train[0].p ? [false, true] : [false])) {
-    const rows = train.map(s => vec(s, usePatch));
-    const { mu, sd } = standardize(rows);
-    const G = gram(rows.map(r => r.map((v,j) => (v - mu[j]) / sd[j])), idx, tx, ty);
-    for (const lam of [1, 10, 100, 1000, 10000]) {
-      const m = { ...ridge(G, lam), mu, sd, lam, usePatch };
+// Entrena todos los modelos candidatos y elige el que menos falla en los puntos de prueba
+async function selectModel(train, sets) {
+  const hasDeep = train.some(s => s.d);
+  const specs = [{ fs: "cnn" }, { fs: "all" }];
+  if (hasDeep) {
+    specs.push({ fs: "deep" });
+    for (const gamma of [0.3, 1, 3]) specs.push({ fs: "deep", rff: { D: 300, gamma, seed: 1234 } });
+  }
+  const results = [];
+  for (const spec of specs) {
+    info(`Entrenando la IA… (${results.length + 1}/${specs.length})`); await sleep(10);
+    const P = prepare(train, spec);
+    let best = null;
+    for (const lam of spec.rff ? [0.1, 1, 10, 100] : [1, 10, 100, 1000, 10000]) {
+      const m = { ...ridge(P.G, lam), mu: P.mu, sd: P.sd, lam, fs: spec.fs, rff: P.spec.rff || null };
       const e = valError(m, sets);
       if (!best || e < best.err) best = { err: e, m };
     }
+    results.push(best);
   }
-  return best;
+  results.sort((a, b) => a.err - b.err);
+  const base = Math.min(...results.filter(r => !r.m.rff && r.m.fs !== "deep").map(r => r.err));
+  return { ...results[0], base };
 }
 
 $("calBtn").onclick = async () => {
@@ -625,19 +644,19 @@ $("calBtn").onclick = async () => {
   // 1) retraso de la mirada al seguir el punto: se elige el que mejor encaja
   let bestLag = 100, bestLagErr = Infinity;
   for (const lag of [0, 50, 100, 150, 200, 250, 300]) {
-    const m = fitModel([...fix, ...pursuitSamples(P, lag)], { lam: 100, usePatch: false });
+    const m = fitModel([...fix, ...pursuitSamples(P, lag)], { fs: "cnn", lam: 100 });
     const e = valError(m, sets);
     if (e < bestLagErr) { bestLagErr = e; bestLag = lag; }
   }
   // 2) los puntos fijos cuentan doble: son los datos más limpios
   const train = [...fix, ...fix, ...pursuitSamples(P, bestLag)];
-  const best = selectModel(train, sets);
+  const best = await selectModel(train, sets);
   finishCal();
   // 3) modelo final con todos los datos (incluidos los de prueba)
-  const valSamples = sets.flatMap(s => s.frames.map(f => ({ g: f.g, p: f.p, x: s.x, y: s.y })));
+  const valSamples = sets.flatMap(s => s.frames.map(f => ({ g: f.g, p: f.p, d: f.d, x: s.x, y: s.y })));
   samples = [...train, ...valSamples];
-  model = fitModel(samples, { lam: best.m.lam, usePatch: best.m.usePatch });
-  model.valErr = best.err; model.lag = bestLag;
+  model = fitModel(samples, { fs: best.m.fs, rff: best.m.rff, lam: best.m.lam });
+  model.valErr = best.err; model.lag = bestLag; model.baseErr = best.base;
   save(modelKey(), model);
   gx.reset(); gy.reset(); px = innerWidth/2; py = innerHeight/2; fixX = fixY = null; offX = offY = 0;
   const e = best.err, diag = Math.hypot(innerWidth, innerHeight), pct = e / diag * 100;
@@ -648,11 +667,13 @@ $("calBtn").onclick = async () => {
     `En la prueba, la mirada estimada quedó a unos ${Math.round(e)} px del punto real (${pct.toFixed(0)} % de la diagonal). ` +
     (level === "bad" ? "Repítela con la cabeza apoyada o muy quieta, luz de frente y la cara centrada en la cámara."
       : "En el modo preciso, usa la mirada para llegar a la zona y gira un poco la cabeza para afinar.") +
+    `<br><br>🧠 Modelo elegido: <b>${nameOf(best.m)}</b>` +
+    (isFinite(best.base) && best.base > best.err + 1 ? ` · la IA bajó el error de ${Math.round(best.base)} a ${Math.round(best.err)} px.` : ".") +
     (fps && fps < 10 ? ` Tu ordenador solo procesa ${fps} imágenes por segundo: cierra otras pestañas o programas para que vaya más fluido.` : ""));
 };
 function finishCal() { collect = null; calDot.style.display = "none"; $("calInfo").style.display = "none"; $("calBtn").disabled = false; }
 function showResult(level, title, text) {
-  $("resTitle").textContent = title; $("resText").textContent = text;
+  $("resTitle").textContent = title; $("resText").innerHTML = text;
   $("result").className = level === "good" ? "" : level; $("result").style.display = "block";
 }
 $("resOk").onclick = () => { $("result").style.display = "none"; };
@@ -680,10 +701,10 @@ function checkTargets() {
       // recalibración continua: al activar un botón, sabemos dónde mirabas
       if (samples.length && model && $("mode").value !== "head") {
         const cx = r.left + r.width/2, cy = r.top + r.height/2;
-        recent.slice(-15).forEach(f => samples.push({ g: f.g, p: f.p, x: cx, y: cy }));
+        recent.slice(-15).forEach(f => samples.push({ g: f.g, p: f.p, d: f.d, x: cx, y: cy }));
         if (samples.length > 2500) samples.splice(0, samples.length - 2500);
         const valErr = model.valErr;
-        model = fitModel(samples, { lam: model.lam, usePatch: model.usePatch }); model.valErr = valErr;
+        model = fitModel(samples, { fs: fsOf(model), rff: model.rff, lam: model.lam }); model.valErr = valErr;
       }
     }
   }
