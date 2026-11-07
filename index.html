@@ -27,6 +27,34 @@
   #pointer::after { content:""; position:absolute; left:50%; top:50%; width:4px; height:4px; margin:-2px;
     background:var(--acc); border-radius:50%; }
   #gazeDot { position:fixed; width:10px; height:10px; margin:-5px 0 0 -5px; border-radius:50%; background:#f8717199; pointer-events:none; z-index:10; display:none; }
+  .tab { background:transparent; }
+  .tab.active { background:var(--acc); color:#06210f; border-color:var(--acc); font-weight:600; }
+  #game { position:fixed; inset:0; z-index:4; display:none; overflow:hidden;
+    background: radial-gradient(ellipse at 50% 120%, #1f3a2a 0%, #0c1712 45%, #050807 100%); }
+  #game.hurt { box-shadow: inset 0 0 160px 40px #dc2626; }
+  #gField { position:absolute; inset:0; }
+  #hud { position:absolute; left:16px; right:200px; bottom:14px; display:flex; flex-wrap:wrap; gap:8px 22px; align-items:center;
+    font-size:16px; color:var(--fg); z-index:2; }
+  #hud b { font-size:22px; color:var(--acc); }
+  #hud .meter { display:flex; align-items:center; gap:6px; }
+  #hud .track { width:120px; height:10px; background:#ffffff22; border-radius:6px; overflow:hidden; display:inline-block; }
+  #gSmileBar { display:block; height:100%; width:0; background:var(--warn); transition:width .08s; }
+  #gOverlay { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; z-index:3; pointer-events:none; }
+  #gOverlay h2 { font-size:46px; margin:0 0 12px; }
+  #gOverlay p { font-size:19px; color:var(--muted); line-height:1.6; max-width:620px; margin:0; }
+  #gOverlay b { color:var(--fg); }
+  .zombie { position:absolute; transform:translate(-50%,-50%); line-height:1; user-select:none; pointer-events:none; transition:opacity .4s; }
+  .zombie.dying { opacity:0; transform:translate(-50%,-50%) scale(1.6); transition:all .5s; }
+  .flash { position:absolute; width:70px; height:70px; margin:-35px 0 0 -35px; border-radius:50%; pointer-events:none;
+    background:radial-gradient(circle, #fff 0%, #fde047 30%, #f9731600 70%); animation:flash .3s ease-out forwards; }
+  @keyframes flash { from { transform:scale(.3); opacity:1; } to { transform:scale(1.4); opacity:0; } }
+  .pop { position:absolute; transform:translate(-50%,-100%); color:var(--acc); font-weight:700; font-size:24px; pointer-events:none;
+    animation:pop .6s ease-out forwards; }
+  @keyframes pop { to { transform:translate(-50%,-180%); opacity:0; } }
+  #pointer.aim { border-color:#fde047; box-shadow:0 0 12px #fde047; width:40px; height:40px; margin:-20px 0 0 -20px; background:transparent; }
+  #pointer.aim::before { content:""; position:absolute; left:50%; top:-10px; bottom:-10px; width:2px; margin-left:-1px; background:#fde047; }
+  #pointer.aim::after { background:transparent; left:-10px; right:-10px; top:50%; width:auto; height:2px; margin:-1px 0 0; border-radius:0; box-shadow:none; background:#fde047; }
   #pointer.fine { border-color:#60a5fa; box-shadow:0 0 12px #60a5fa; }
   #pointer.fine::after { background:#60a5fa; }
   #calDot { position:fixed; width:30px; height:30px; margin:-15px 0 0 -15px; border-radius:50%;
@@ -61,6 +89,8 @@
 <body>
 <div id="bar">
   <h1>👁️ Puntero con los ojos</h1>
+  <button class="tab active" id="tabPointer">🎯 Puntero</button>
+  <button class="tab" id="tabGame">🧟 Zombis</button>
   <button id="startBtn">Activar cámara</button>
   <button id="calBtn" disabled>Calibrar</button>
   <label>Control
@@ -77,7 +107,7 @@
   <label title="Muestra un punto rojo con la estimación de la mirada sin filtrar"><input id="showGaze" type="checkbox"> Ver mirada</label>
   <span id="status">Cámara apagada</span>
   <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600;cursor:help"></span>
-  <span id="ver">v7.3 · red neuronal</span>
+  <span id="ver">v8 · zombis</span>
 </div>
 
 <div id="msg"><div>
@@ -96,6 +126,16 @@
 <div id="calInfo"></div>
 <div id="result"><h2 id="resTitle"></h2><p id="resText"></p>
   <div class="row"><button id="resOk">Empezar a usarlo</button><button id="resAgain">Repetir calibración</button></div></div>
+<div id="game">
+  <div id="gField"></div>
+  <div id="hud">
+    <span>Puntos <b id="gScore">0</b></span><span>Nivel <b id="gLevel">1</b></span><span id="gLives">❤️❤️❤️</span><span>Récord <b id="gBest">0</b></span>
+    <span class="meter" title="Lo que sonríes ahora mismo. Al llenarse del todo, disparas">😊 <span class="track"><span id="gSmileBar"></span></span></span>
+    <label title="Más bajo = basta con una sonrisa más pequeña">Sonrisa necesaria <input id="smileThr" type="range" min="4" max="50" value="14"></label>
+    <label title="Cuánto puede fallar la puntería y aun así acertar">Ayuda al apuntar <input id="aimAssist" type="range" min="0" max="160" value="70"></label>
+  </div>
+  <div id="gOverlay"></div>
+</div>
 <div id="pointer"></div>
 <div id="gazeDot"></div>
 
@@ -151,7 +191,7 @@ function features(r) {
   const open = (dist(lm[159], lm[145]) / dist(lm[33], lm[133]) + dist(lm[386], lm[374]) / dist(lm[362], lm[263])) / 2;
   const g = [r.pog[0], r.pog[1], hL, vL, hR, vR, r.head[0], r.head[1], r.head[2],
              r.origin[0] / 50, r.origin[1] / 50, r.origin[2] / 60];
-  return { g, p: 1, open, yaw2, pitch2, t: r.t };
+  return { g, p: 1, open, yaw2, pitch2, t: r.t, smile: r.smile };
 }
 // Vector para la regresión. "all" = red neuronal + geometría del iris; si no, solo red neuronal + cabeza.
 function vec(s, all) {
@@ -297,6 +337,7 @@ function handleFrame(f) {
   if (collect) { if (!f.blink) collect(f); return; }
   if (!f.blink) { recent.push(f); if (recent.length > 40) recent.shift(); }
   if (model || $("mode").value === "head") movePointer(f);
+  if (G.on) gameFrame(f);
   if (trackMsg && statusEl.textContent !== trackMsg) statusEl.textContent = trackMsg;
   if (!model && $("mode").value !== "head") statusEl.textContent = `Cara detectada (${fps} img/s) · pulsa Calibrar`;
 }
@@ -586,9 +627,165 @@ $("demoBtn").onclick = () => {
   $("msg").style.display = "none";
 };
 
+// ================================================================ JUEGO: ZOMBIS
+// Apuntas con la mirada y disparas con una ligera sonrisa (blendshapes de MediaPipe).
+const G = { on: false, running: false, score: 0, best: 0, lives: 3, level: 1, kills: 0, zombies: [], nextSpawn: 0, raf: 0 };
+try { G.best = +(localStorage.getItem("zombiBest") || 0); } catch {}
+const gField = $("gField"), gOverlay = $("gOverlay");
+let audio = null;
+function ensureAudio() { try { if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)(); if (audio.state === "suspended") audio.resume(); } catch {} }
+function sfx(kind) {
+  if (!audio) return;
+  const t = audio.currentTime, out = audio.createGain(); out.connect(audio.destination);
+  if (kind === "shot") {
+    const len = 0.14, buf = audio.createBuffer(1, audio.sampleRate * len, audio.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/d.length, 3);
+    const src = audio.createBufferSource(), lp = audio.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 1800;
+    src.buffer = buf; src.connect(lp); lp.connect(out); out.gain.value = 0.5; src.start(t);
+  } else {
+    const o = audio.createOscillator();
+    o.type = kind === "kill" ? "square" : "sawtooth";
+    o.frequency.setValueAtTime(kind === "kill" ? 420 : 90, t);
+    o.frequency.exponentialRampToValueAtTime(kind === "kill" ? 60 : 50, t + (kind === "kill" ? 0.25 : 0.5));
+    out.gain.setValueAtTime(kind === "kill" ? 0.12 : 0.25, t); out.gain.exponentialRampToValueAtTime(0.001, t + (kind === "kill" ? 0.25 : 0.5));
+    o.connect(out); o.start(t); o.stop(t + 0.55);
+  }
+}
+
+// --- sonrisa: valor relativo a tu cara neutra, con histéresis para no disparar en ráfaga
+let smileBase = null, smileArmed = true, lastShotT = 0;
+function smileTrigger(v, now) {
+  const thr = $("smileThr").value / 100;
+  if (smileBase === null) smileBase = v;
+  const rel = v - smileBase;
+  if (rel < thr * 0.4) smileBase = smileBase * 0.97 + v * 0.03;     // se adapta a tu cara en reposo
+  const meter = Math.max(0, Math.min(1, rel / thr));
+  $("gSmileBar").style.width = (meter * 100) + "%";
+  $("gSmileBar").style.background = meter >= 1 ? "var(--acc)" : "var(--warn)";
+  if (smileArmed && rel > thr && now - lastShotT > 300) { smileArmed = false; lastShotT = now; return true; }
+  if (!smileArmed && rel < thr * 0.5) smileArmed = true;
+  return false;
+}
+// al sonreír la cara se mueve un poco: se apunta donde estaba el puntero justo antes
+const aimHist = [];
+function aimPoint(now) {
+  let p = [px, py];
+  for (let i = aimHist.length - 1; i >= 0; i--) if (aimHist[i][0] <= now - 160) { p = [aimHist[i][1], aimHist[i][2]]; break; }
+  return p;
+}
+function gameFrame(f) {
+  const now = performance.now();
+  aimHist.push([now, px, py]); if (aimHist.length > 60) aimHist.shift();
+  if (f.smile == null) return;
+  if (!smileTrigger(f.smile, now)) return;
+  if (!G.running) { if (model) startGame(); return; }
+  shoot(...aimPoint(now));
+}
+function shoot(x, y) {
+  sfx("shot");
+  const fl = document.createElement("div"); fl.className = "flash"; fl.style.left = x + "px"; fl.style.top = y + "px";
+  gField.appendChild(fl); setTimeout(() => fl.remove(), 300);
+  const assist = +$("aimAssist").value;
+  let best = null, bestD = Infinity;
+  for (const z of G.zombies) {
+    if (z.dead) continue;
+    const d = Math.hypot(z.x - x, z.y - y) - z.r;
+    if (d < assist && d < bestD) { best = z; bestD = d; }
+  }
+  if (!best) return;
+  best.dead = true; sfx("kill");
+  const prog = (performance.now() - best.born) / best.life;
+  const pts = 10 + Math.round((1 - prog) * 20);
+  G.score += pts; G.kills++;
+  G.level = 1 + Math.floor(G.kills / 8);
+  best.el.classList.add("dying"); best.el.innerHTML = "💥";
+  const pop = document.createElement("div"); pop.className = "pop"; pop.textContent = "+" + pts;
+  pop.style.left = best.x + "px"; pop.style.top = (best.y - best.r) + "px"; gField.appendChild(pop);
+  setTimeout(() => { best.el.remove(); pop.remove(); }, 600);
+  G.zombies = G.zombies.filter(z => z !== best);
+  hud();
+}
+function hud() {
+  $("gScore").textContent = G.score; $("gLevel").textContent = G.level;
+  $("gLives").textContent = "❤️".repeat(Math.max(0, G.lives)) + "🖤".repeat(Math.max(0, 3 - G.lives));
+  $("gBest").textContent = G.best;
+}
+function spawnZombie(now) {
+  const top = $("bar").offsetHeight + 90, W = innerWidth, H = innerHeight;
+  let x, y, tries = 0;
+  do { x = 90 + Math.random() * (W - 180); y = top + Math.random() * (H - top - 90); tries++; }
+  while (tries < 20 && G.zombies.some(z => Math.hypot(z.x - x, z.y - y) < 160));
+  const el = document.createElement("div"); el.className = "zombie"; el.textContent = Math.random() < 0.15 ? "🧟‍♀️" : "🧟";
+  gField.appendChild(el);
+  const life = Math.max(3200, 9000 - (G.level - 1) * 650);
+  G.zombies.push({ x, y, born: now, life, el, r: 30, wob: Math.random() * 6.28 });
+}
+function startGame() {
+  ensureAudio();
+  G.zombies.forEach(z => z.el.remove());
+  Object.assign(G, { running: true, score: 0, lives: 3, level: 1, kills: 0, zombies: [], nextSpawn: performance.now() + 800 });
+  gOverlay.style.display = "none"; hud();
+}
+function gameOver() {
+  G.running = false;
+  if (G.score > G.best) { G.best = G.score; try { localStorage.setItem("zombiBest", G.best); } catch {} }
+  hud();
+  overlay("💀 Te han comido", `Puntos: ${G.score} · Récord: ${G.best}<br><br><b>Sonríe</b> para jugar otra vez`);
+}
+function overlay(title, html) { gOverlay.innerHTML = `<h2>${title}</h2><p>${html}</p>`; gOverlay.style.display = "flex"; }
+function gameLoop() {
+  if (!G.on) return;
+  const now = performance.now();
+  if (G.running) {
+    const maxZ = Math.min(7, 1 + G.level);
+    if (now > G.nextSpawn && G.zombies.length < maxZ) {
+      spawnZombie(now);
+      G.nextSpawn = now + Math.max(650, 2400 - (G.level - 1) * 220) * (0.7 + Math.random() * 0.6);
+    }
+    for (const z of [...G.zombies]) {
+      const p = (now - z.born) / z.life;
+      if (p >= 1) {                                   // te alcanza
+        G.zombies = G.zombies.filter(q => q !== z); z.el.remove();
+        G.lives--; sfx("bite");
+        $("game").classList.add("hurt"); setTimeout(() => $("game").classList.remove("hurt"), 350);
+        hud(); if (G.lives <= 0) { gameOver(); break; }
+        continue;
+      }
+      const size = 44 + p * 120; z.r = size * 0.42;
+      const wx = Math.sin(now / 300 + z.wob) * 6 * (1 + p);
+      z.el.style.fontSize = size + "px";
+      z.el.style.left = (z.x + wx) + "px"; z.el.style.top = z.y + "px";
+      z.el.style.filter = `drop-shadow(0 0 ${4 + p * 14}px rgba(${Math.round(80 + p*175)},40,40,.8))`;
+    }
+  }
+  G.raf = requestAnimationFrame(gameLoop);
+}
+function showTab(game) {
+  G.on = game;
+  $("tabPointer").classList.toggle("active", !game); $("tabGame").classList.toggle("active", game);
+  $("game").style.display = game ? "block" : "none";
+  pointer.classList.toggle("aim", game);
+  if (game) {
+    ensureAudio();
+    $("msg").style.display = "none"; targetsEl.style.visibility = "hidden";
+    if (!G.running) overlay("🧟 Zombis",
+      !running ? "Primero pulsa <b>Activar cámara</b> y <b>Calibrar</b> en la pestaña Puntero." :
+      !model ? "Primero <b>calibra</b> en la pestaña Puntero." :
+      "Apunta con la mirada a los zombis y <b>sonríe ligeramente</b> para disparar.<br>Si un zombi se acerca demasiado, te muerde.<br><br><b>Sonríe</b> para empezar");
+    hud(); cancelAnimationFrame(G.raf); gameLoop();
+  } else { cancelAnimationFrame(G.raf); }
+}
+$("tabPointer").onclick = () => showTab(false);
+$("tabGame").onclick = () => showTab(true);
+gField.addEventListener("click", e => { if (G.running) shoot(e.clientX, e.clientY); });   // también con el ratón, para probar
+for (const id of ["smileThr", "aimAssist"]) {
+  const v = load("eye7_" + id); if (v != null) $(id).value = v;
+  $(id).addEventListener("input", () => save("eye7_" + id, $(id).value));
+}
+
 // gancho para pruebas automáticas
 window.__eyeTest = { handleFrame, features, fitModel, predict, enable: () => { $("calBtn").disabled = false; $("demoBtn").disabled = false; },
-  get model() { return model; }, get cur() { return cur; }, get fps() { return fps; }, get px() { return [px, py]; } };
+  get model() { return model; }, G, shoot, startGame, showTab, get cur() { return cur; }, get fps() { return fps; }, get px() { return [px, py]; } };
 </script>
 </body>
 </html>
