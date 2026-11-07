@@ -108,6 +108,11 @@
   <button class="tab" id="tabGame">🧟 Zombis</button>
   <button id="startBtn">Activar cámara</button>
   <label title="Elige la cámara del portátil o una externa">📷 <select id="camSel" style="max-width:190px"><option value="">Cámara predeterminada</option></select></label>
+  <label title="Resolución de la cámara. Más alta = más detalle en tus ojos, pero más trabajo para el ordenador">Calidad <select id="quality"><option value="fast">Rápida (720p)</option><option value="high" selected>Alta (1080p)</option><option value="max">Máxima (4K)</option></select></label>
+  <label style="display:none" title="Zoom de la cámara: que tu cara llene la imagen, sin cortarla">🔎 Zoom <input id="zoomCtl" type="range"></label>
+  <label style="display:none" title="Mover la cámara a izquierda/derecha">↔ <input id="panCtl" type="range" style="width:60px"></label>
+  <label style="display:none" title="Mover la cámara arriba/abajo">↕ <input id="tiltCtl" type="range" style="width:60px"></label>
+  <span id="ptzNote" style="display:none;font-size:12px;color:var(--muted)" title="Tu cámara no permite controlar el zoom desde el navegador">sin zoom</span>
   <button id="calBtn" disabled>Calibrar</button>
   <label>Control
     <select id="mode">
@@ -126,7 +131,7 @@
   <label title="Más bajo = basta con una sonrisa más pequeña. La barra muestra cuánto sonríes ahora">😊 Sonrisa <input id="smileThr" type="range" min="4" max="50" value="14"> <span class="track mini"><span id="smileBar2"></span></span></label>
   <span id="status">Cámara apagada</span>
   <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600;cursor:help"></span>
-  <span id="ver">v10 · IA</span>
+  <span id="ver">v11 · calidad y zoom</span>
 </div>
 
 <div id="msg"><div>
@@ -331,7 +336,7 @@ async function dispatch() {
   wk.busy = true;
   const t = performance.now();
   try {
-    const sc = Math.min(1, 960 / video.videoWidth);
+    const sc = Math.min(1, quality().proc / video.videoWidth);
     const bitmap = await createImageBitmap(video, { resizeWidth: Math.round(video.videoWidth * sc), resizeHeight: Math.round(video.videoHeight * sc) });
     wk.w.postMessage({ type: "frame", payload: { bitmap, t } }, [bitmap]);
   } catch (e) { wk.busy = false; }
@@ -433,7 +438,7 @@ function movePointer(f) {
 // ---------------------------------------------------------------- elegir cámara
 // Cada cámara guarda su propia calibración (están en sitios distintos).
 let camId = load("eye7_camId") || "";
-const modelKey = () => "eye7_model_" + (camId || "default");
+const modelKey = () => "eye7_model_" + (camId || "default") + "_" + ($("quality").value || "high");
 const camConstraints = () => ({ video: { ...(camId ? { deviceId: { exact: camId } } : {}),
   width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } } });
 async function listCams() {
@@ -454,18 +459,72 @@ $("camSel").addEventListener("change", async () => {
   camId = $("camSel").value; save("eye7_camId", camId);
   if (!video.srcObject) return;                       // aún sin activar: se usará al pulsar Activar cámara
   try {
-    video.srcObject.getTracks().forEach(t => t.stop());
-    video.srcObject = await navigator.mediaDevices.getUserMedia(camConstraints());
-    await video.play();
-    lastDispatchedTime = -1;
-    updateEngineInfo();
-    model = load(modelKey()); samples = []; gx.reset(); gy.reset(); fixX = fixY = null;
-    trackMsg = model ? `Cámara cambiada · uso su calibración guardada (error ≈ ${Math.round(model.valErr || 0)} px)` : "";
-    statusEl.textContent = model ? trackMsg : "Cámara cambiada · pulsa Calibrar para esta cámara";
-    pointer.style.display = model ? "block" : "none";
+    await openCamera(); afterCameraChange("Cámara cambiada");
   } catch (e) { statusEl.textContent = "No se pudo abrir esa cámara: " + (e.message || e.name); }
 });
 navigator.mediaDevices?.addEventListener?.("devicechange", listCams);
+// ---------------------------------------------------------------- calidad y zoom de la cámara
+const QUALITY = {
+  fast: { w: 1280, h: 720,  proc: 960,  name: "rápida" },
+  high: { w: 1920, h: 1080, proc: 1920, name: "alta" },
+  max:  { w: 3840, h: 2160, proc: 3840, name: "máxima" },
+};
+const quality = () => QUALITY[$("quality").value] || QUALITY.high;
+// Abre (o reabre) la cámara elegida con la calidad elegida; pide permiso de zoom/giro si la cámara lo admite
+async function openCamera() {
+  const q = quality();
+  const base = { ...(camId ? { deviceId: { exact: camId } } : {}), width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: 60 } };
+  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  try { video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { ...base, pan: true, tilt: true, zoom: true } }); }
+  catch (e) {
+    if (e.name === "NotAllowedError" || e.name === "NotReadableError") throw e;
+    try { video.srcObject = await navigator.mediaDevices.getUserMedia({ video: base }); }
+    catch (e2) { if (camId && (e2.name === "OverconstrainedError" || e2.name === "NotFoundError")) { camId = ""; return openCamera(); } throw e2; }
+  }
+  await video.play();
+  lastDispatchedTime = -1;
+  setupPTZ();
+}
+function setupPTZ() {
+  const track = video.srcObject?.getVideoTracks()[0]; if (!track) return;
+  const caps = track.getCapabilities ? track.getCapabilities() : {}, st = track.getSettings();
+  let any = false;
+  for (const k of ["zoom", "pan", "tilt"]) {
+    const el = $(k + "Ctl"), wrap = el.parentNode;
+    if (caps[k] && caps[k].max > caps[k].min && st[k] !== undefined) {
+      any = true; wrap.style.display = "";
+      Object.assign(el, { min: caps[k].min, max: caps[k].max, step: caps[k].step || (caps[k].max - caps[k].min) / 100 });
+      const saved = load(`eye7_${k}_${camId}`);
+      el.value = saved != null ? saved : st[k];
+      if (saved != null && saved !== st[k]) track.applyConstraints({ advanced: [{ [k]: saved }] }).catch(() => {});
+    } else wrap.style.display = "none";
+  }
+  $("ptzNote").style.display = any ? "none" : "";
+}
+for (const k of ["zoom", "pan", "tilt"]) {
+  $(k + "Ctl").addEventListener("input", () => {
+    const track = video.srcObject?.getVideoTracks()[0], v = +$(k + "Ctl").value;
+    track?.applyConstraints({ advanced: [{ [k]: v }] }).catch(() => {});
+    save(`eye7_${k}_${camId}`, v);
+    if (model) { trackMsg = "Has cambiado el encuadre: recalibra para aprovecharlo"; statusEl.textContent = trackMsg; }
+  });
+}
+{ const v = load("eye7_quality"); if (v && QUALITY[v]) $("quality").value = v; }
+$("quality").addEventListener("change", async () => {
+  save("eye7_quality", $("quality").value);
+  if (!video.srcObject) return;
+  try { await openCamera(); afterCameraChange("Calidad cambiada"); }
+  catch (e) { statusEl.textContent = "No se pudo abrir la cámara con esa calidad: " + (e.message || e.name); }
+});
+function afterCameraChange(what) {
+  updateEngineInfo();
+  model = load(modelKey()); samples = []; gx.reset(); gy.reset(); fixX = fixY = null;
+  trackMsg = model ? `${what} · uso su calibración guardada (error ≈ ${Math.round(model.valErr || 0)} px)` : "";
+  statusEl.textContent = model ? trackMsg : `${what} · pulsa Calibrar`;
+  pointer.style.display = model ? "block" : "none";
+}
+
+
 listCams();
 
 
@@ -474,10 +533,9 @@ $("startBtn").onclick = async () => {
   try {
     statusEl.textContent = "Pidiendo acceso a la cámara…";
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("este navegador no permite usar la cámara aquí.");
-    try { video.srcObject = await navigator.mediaDevices.getUserMedia(camConstraints()); }
-    catch (e) { if (camId && (e.name === "OverconstrainedError" || e.name === "NotFoundError")) { camId = ""; video.srcObject = await navigator.mediaDevices.getUserMedia(camConstraints()); } else throw e; }
+    await openCamera();
     camId = video.srcObject.getVideoTracks()[0].getSettings().deviceId || camId; save("eye7_camId", camId);
-    model = load(modelKey()) || load("eye7_model");   // la calibración de antes vale para la primera cámara
+    model = load(modelKey()) || load("eye7_model_" + (camId || "default")) || load("eye7_model");   // la calibración de antes vale para la primera cámara
     listCams();
     await video.play();
     const nWorkers = Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 4) / 3)));
