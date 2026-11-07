@@ -56,6 +56,20 @@
   #pointer.aim { border-color:#fde047; box-shadow:0 0 12px #fde047; width:40px; height:40px; margin:-20px 0 0 -20px; background:transparent; }
   #pointer.aim::before { content:""; position:absolute; left:50%; top:-10px; bottom:-10px; width:2px; margin-left:-1px; background:#fde047; }
   #pointer.aim::after { background:transparent; left:-10px; right:-10px; top:50%; width:auto; height:2px; margin:-1px 0 0; border-radius:0; box-shadow:none; background:#fde047; }
+  #lens { position:fixed; inset:0; z-index:8; display:none; pointer-events:none; }
+  #lensInner { position:absolute; inset:0; }
+  .targetsClone { position:fixed; inset:96px 210px 36px 36px; display:grid; grid-template-columns:repeat(4,1fr);
+    grid-template-rows:repeat(3,1fr); gap:22px; }
+  .gFieldClone { position:absolute; inset:0; }
+  #lensRing { position:fixed; transform:translate(-50%,-50%); border-radius:50%; border:3px solid #a78bfa;
+    box-shadow:0 0 0 4000px #00000055, 0 0 30px #a78bfa; z-index:9; pointer-events:none; display:none; }
+  #pointer.inLens { border-color:#a78bfa; box-shadow:0 0 12px #a78bfa; }
+  .ripple { position:fixed; width:60px; height:60px; margin:-30px 0 0 -30px; border-radius:50%; border:3px solid #a78bfa;
+    pointer-events:none; z-index:12; animation:ripple .5s ease-out forwards; }
+  @keyframes ripple { from { transform:scale(.2); opacity:1; } to { transform:scale(1.5); opacity:0; } }
+  .track { width:120px; height:10px; background:#ffffff22; border-radius:6px; overflow:hidden; display:inline-block; }
+  .track.mini { width:50px; height:8px; }
+  #smileBar2 { display:block; height:100%; width:0; background:var(--warn); }
   #pointer.fine { border-color:#60a5fa; box-shadow:0 0 12px #60a5fa; }
   #pointer.fine::after { background:#60a5fa; }
   #calDot { position:fixed; width:30px; height:30px; margin:-15px 0 0 -15px; border-radius:50%;
@@ -106,9 +120,12 @@
   <label title="Cuánto se mueve el puntero al girar la cabeza">Cabeza <input id="headGain" type="range" min="10" max="100" value="45"></label>
   <button id="demoBtn" disabled>Botones de prueba</button>
   <label title="Muestra un punto rojo con la estimación de la mirada sin filtrar"><input id="showGaze" type="checkbox"> Ver mirada</label>
+  <label title="Sonríe para ampliar la zona donde miras; mira el punto exacto dentro de la lupa y vuelve a sonreír para hacer clic"><input id="lupaOn" type="checkbox"> 🔍 Lupa</label>
+  <label title="Aumento de la lupa">×<select id="lupaZoom"><option>2</option><option selected>3</option><option>4</option></select></label>
+  <label title="Más bajo = basta con una sonrisa más pequeña. La barra muestra cuánto sonríes ahora">😊 Sonrisa <input id="smileThr" type="range" min="4" max="50" value="14"> <span class="track mini"><span id="smileBar2"></span></span></label>
   <span id="status">Cámara apagada</span>
   <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600;cursor:help"></span>
-  <span id="ver">v8.1 · zombis</span>
+  <span id="ver">v9 · lupa</span>
 </div>
 
 <div id="msg"><div>
@@ -117,6 +134,7 @@
   el punto rojo mientras recorre la pantalla, y al final 5 puntos azules <b>miden la precisión real</b>. No muevas la cabeza.<br><br>
   <b>Modo preciso:</b> mira donde quieras ir y el puntero salta allí; después
   <b>gira un poco la cabeza</b> para afinar (el puntero se vuelve azul en ese momento).<br><br>
+  <b>🔍 Lupa (opcional):</b> actívala arriba. Sonríe para ampliar la zona donde miras, mira el punto exacto dentro de la lupa y vuelve a sonreír para hacer clic.<br><br>
   Luz de frente, cara centrada, a unos 50–60 cm, y la misma postura que al calibrar.<br>
   <small>Motor de mirada: red neuronal BlazeGaze de <a href="https://github.com/RedForestAI/WebEyeTrack" style="color:inherit;pointer-events:auto">WebEyeTrack</a> (licencia MIT) + MediaPipe.</small>
 </div></div>
@@ -132,13 +150,14 @@
   <div id="hud">
     <span>Puntos <b id="gScore">0</b></span><span>Nivel <b id="gLevel">1</b></span><span id="gLives">❤️❤️❤️</span><span>Récord <b id="gBest">0</b></span>
     <span class="meter" title="Lo que sonríes ahora mismo. Al llenarse del todo, disparas">😊 <span class="track"><span id="gSmileBar"></span></span></span>
-    <label title="Más bajo = basta con una sonrisa más pequeña">Sonrisa necesaria <input id="smileThr" type="range" min="4" max="50" value="14"></label>
     <label title="Cuánto puede fallar la puntería y aun así acertar">Ayuda al apuntar <input id="aimAssist" type="range" min="0" max="160" value="70"></label>
   </div>
   <div id="gOverlay"></div>
 </div>
 <div id="pointer"></div>
 <div id="gazeDot"></div>
+<div id="lens"><div id="lensInner"></div></div>
+<div id="lensRing"></div>
 
 <script type="module">
 /* =====================================================================
@@ -338,7 +357,11 @@ function handleFrame(f) {
   if (collect) { if (!f.blink) collect(f); return; }
   if (!f.blink) { recent.push(f); if (recent.length > 40) recent.shift(); }
   if (model || $("mode").value === "head") movePointer(f);
+  aimHist.push([performance.now(), px, py]); if (aimHist.length > 60) aimHist.shift();
+  lensWatch(performance.now());
   if (G.on) gameFrame(f);
+  else if (lupaOn()) pointerSmileFrame(f);
+  else if (f.smile != null) smileTrigger(f.smile, performance.now());   // solo para el medidor
   if (trackMsg && statusEl.textContent !== trackMsg) statusEl.textContent = trackMsg;
   if (!model && $("mode").value !== "head") statusEl.textContent = `Cara detectada (${fps} img/s) · pulsa Calibrar`;
 }
@@ -602,12 +625,12 @@ const targetsEl = $("targets"), DWELL = 1200;
 let lastT = performance.now();
 function checkTargets() {
   const now = performance.now(), dt = now - lastT; lastT = now;
-  if (targetsEl.style.visibility !== "visible") return;
+  if (targetsEl.style.visibility !== "visible" || lens.open) return;
   for (const t of targetsEl.children) {
     const r = t.getBoundingClientRect();
     const inside = px>=r.left && px<=r.right && py>=r.top && py<=r.bottom;
     t.classList.toggle("hover", inside);
-    t._dwell = inside ? t._dwell + dt : 0;
+    t._dwell = inside && !lupaOn() ? t._dwell + dt : 0;   // con lupa, solo se hace clic sonriendo
     t.querySelector(".fill").style.width = Math.max(0, Math.min(100, t._dwell/DWELL*100)) + "%";
     if (t._dwell >= DWELL) {
       t.classList.toggle("done"); t._dwell = -800;
@@ -643,6 +666,11 @@ function sfx(kind) {
     for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/d.length, 3);
     const src = audio.createBufferSource(), lp = audio.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 1800;
     src.buffer = buf; src.connect(lp); lp.connect(out); out.gain.value = 0.5; src.start(t);
+  } else if (kind === "lens") {
+    const o = audio.createOscillator(); o.type = "sine";
+    o.frequency.setValueAtTime(500, t); o.frequency.exponentialRampToValueAtTime(900, t + 0.12);
+    out.gain.setValueAtTime(0.08, t); out.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    o.connect(out); o.start(t); o.stop(t + 0.16);
   } else {
     const o = audio.createOscillator();
     o.type = kind === "kill" ? "square" : "sawtooth";
@@ -661,8 +689,9 @@ function smileTrigger(v, now) {
   const rel = v - smileBase;
   if (rel < thr * 0.4) smileBase = smileBase * 0.97 + v * 0.03;     // se adapta a tu cara en reposo
   const meter = Math.max(0, Math.min(1, rel / thr));
-  $("gSmileBar").style.width = (meter * 100) + "%";
-  $("gSmileBar").style.background = meter >= 1 ? "var(--acc)" : "var(--warn)";
+  for (const id of ["gSmileBar", "smileBar2"]) {
+    $(id).style.width = (meter * 100) + "%"; $(id).style.background = meter >= 1 ? "var(--acc)" : "var(--warn)";
+  }
   if (smileArmed && rel > thr && now - lastShotT > 300) { smileArmed = false; lastShotT = now; return true; }
   if (!smileArmed && rel < thr * 0.5) smileArmed = true;
   return false;
@@ -676,10 +705,10 @@ function aimPoint(now) {
 }
 function gameFrame(f) {
   const now = performance.now();
-  aimHist.push([now, px, py]); if (aimHist.length > 60) aimHist.shift();
   if (f.smile == null) { $("gSmileBar").parentNode.title = "El motor no envía la sonrisa: recarga la página con Ctrl+Shift+R"; return; }
   if (!smileTrigger(f.smile, now)) return;
   if (!G.running) { if (model) startGame(); return; }
+  if (lupaOn()) { const r = lensAction(now); if (r) shoot(...r); return; }
   shoot(...aimPoint(now));
 }
 function shoot(x, y) {
@@ -763,9 +792,11 @@ function gameLoop() {
       z.el.style.filter = `drop-shadow(0 0 ${4 + p * 14}px rgba(${Math.round(80 + p*175)},40,40,.8))`;
     }
   }
+  if (lens.open && G.on) lensRefresh();
   G.raf = requestAnimationFrame(gameLoop);
 }
 function showTab(game) {
+  closeLens();
   G.on = game;
   $("tabPointer").classList.toggle("active", !game); $("tabGame").classList.toggle("active", game);
   $("game").style.display = game ? "block" : "none";
@@ -783,14 +814,81 @@ function showTab(game) {
 $("tabPointer").onclick = () => showTab(false);
 $("tabGame").onclick = () => showTab(true);
 gField.addEventListener("click", e => { if (G.running) shoot(e.clientX, e.clientY); });   // también con el ratón, para probar
-for (const id of ["smileThr", "aimAssist"]) {
+for (const id of ["smileThr", "aimAssist", "lupaZoom"]) {
   const v = load("eye7_" + id); if (v != null) $(id).value = v;
   $(id).addEventListener("input", () => save("eye7_" + id, $(id).value));
 }
+{ const v = load("eye7_lupaOn"); if (v != null) $("lupaOn").checked = v; $("lupaOn").addEventListener("change", () => save("eye7_lupaOn", $("lupaOn").checked)); }
+
+// ================================================================ LUPA (opcional)
+// Imita a la fóvea: 1.ª sonrisa → se amplía la zona donde miras; miras el punto exacto
+// dentro de la lupa (el error se divide por el aumento); 2.ª sonrisa → clic / disparo ahí.
+const lens = { open: false, cx: 0, cy: 0, z: 3, R: 230, t0: 0, outSince: 0 };
+const lensEl = $("lens"), lensInner = $("lensInner"), lensRing = $("lensRing");
+const lupaOn = () => $("lupaOn").checked;
+function lensRefresh() {
+  const src = G.on ? gField : targetsEl;
+  lensInner.innerHTML = "";
+  const c = src.cloneNode(true); c.style.visibility = "visible"; c.removeAttribute("id");
+  c.className = (G.on ? "gFieldClone" : "targetsClone");
+  lensInner.appendChild(c);
+}
+function openLens(x, y) {
+  lens.z = +$("lupaZoom").value;
+  lens.R = Math.min(260, Math.min(innerWidth, innerHeight) * 0.28);
+  // que la lupa no se salga de la pantalla
+  lens.cx = Math.max(lens.R, Math.min(innerWidth - lens.R, x));
+  lens.cy = Math.max($("bar").offsetHeight + lens.R * 0.6, Math.min(innerHeight - lens.R, y));
+  lens.open = true; lens.t0 = performance.now(); lens.outSince = 0;
+  lensInner.style.transformOrigin = `${lens.cx}px ${lens.cy}px`;
+  lensInner.style.transform = `scale(${lens.z})`;
+  lensEl.style.background = G.on ? "#0c1712" : "var(--bg)";
+  lensEl.style.clipPath = `circle(${lens.R}px at ${lens.cx}px ${lens.cy}px)`;
+  Object.assign(lensRing.style, { left: lens.cx + "px", top: lens.cy + "px", width: 2*lens.R + "px", height: 2*lens.R + "px", display: "block" });
+  lensRefresh(); lensEl.style.display = "block";
+  pointer.classList.add("inLens");
+  sfx && audio && sfx("lens");
+}
+function closeLens() {
+  lens.open = false; lensEl.style.display = "none"; lensRing.style.display = "none"; lensInner.innerHTML = "";
+  pointer.classList.remove("inLens");
+}
+function lensMap(x, y) { return [lens.cx + (x - lens.cx) / lens.z, lens.cy + (y - lens.cy) / lens.z]; }
+// devuelve el punto real donde hacer clic, o null si solo se ha abierto la lupa
+function lensAction(now) {
+  const [ax, ay] = aimPoint(now);
+  if (!lens.open) { openLens(ax, ay); return null; }
+  const r = lensMap(ax, ay); closeLens(); return r;
+}
+// cierre automático: si miras fuera de la lupa un rato, o pasan 8 s
+function lensWatch(now) {
+  if (!lens.open) return;
+  const out = Math.hypot(px - lens.cx, py - lens.cy) > lens.R + 50;
+  if (out) { if (!lens.outSince) lens.outSince = now; } else lens.outSince = 0;
+  if ((lens.outSince && now - lens.outSince > 800) || now - lens.t0 > 8000) closeLens();
+}
+// clic en la pestaña Puntero: activa el botón de prueba que haya en ese punto
+function clickAt(x, y) {
+  const rip = document.createElement("div"); rip.className = "ripple"; rip.style.left = x + "px"; rip.style.top = y + "px";
+  document.body.appendChild(rip); setTimeout(() => rip.remove(), 500);
+  if (targetsEl.style.visibility !== "visible") return;
+  for (const t of targetsEl.children) {
+    const r = t.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) { t.classList.toggle("done"); break; }
+  }
+}
+function pointerSmileFrame(f) {             // pestaña Puntero con lupa activada
+  const now = performance.now();
+  if (f.smile == null || !model) return;
+  if (!smileTrigger(f.smile, now)) return;
+  const r = lensAction(now);
+  if (r) clickAt(...r);
+}
+$("lupaOn").addEventListener("change", () => { if (!lupaOn()) closeLens(); });
 
 // gancho para pruebas automáticas
 window.__eyeTest = { handleFrame, features, fitModel, predict, enable: () => { $("calBtn").disabled = false; $("demoBtn").disabled = false; },
-  get model() { return model; }, G, shoot, startGame, showTab, get cur() { return cur; }, get fps() { return fps; }, get px() { return [px, py]; } };
+  get model() { return model; }, G, lens, openLens, lensMap, shoot, startGame, showTab, get cur() { return cur; }, get fps() { return fps; }, get px() { return [px, py]; } };
 </script>
 </body>
 </html>
