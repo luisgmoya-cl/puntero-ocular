@@ -44,6 +44,7 @@
   #gOverlay h2 { font-size:46px; margin:0 0 12px; }
   #gOverlay p { font-size:19px; color:var(--muted); line-height:1.6; max-width:620px; margin:0; }
   #gOverlay b { color:var(--fg); }
+  .playBtn { pointer-events:auto; margin-top:22px; font-size:20px; padding:12px 28px; background:var(--acc); color:#06210f; border:none; font-weight:700; }
   .zombie { position:absolute; transform:translate(-50%,-50%); line-height:1; user-select:none; pointer-events:none; transition:opacity .4s; }
   .zombie.dying { opacity:0; transform:translate(-50%,-50%) scale(1.6); transition:all .5s; }
   .flash { position:absolute; width:70px; height:70px; margin:-35px 0 0 -35px; border-radius:50%; pointer-events:none;
@@ -107,7 +108,7 @@
   <label title="Muestra un punto rojo con la estimación de la mirada sin filtrar"><input id="showGaze" type="checkbox"> Ver mirada</label>
   <span id="status">Cámara apagada</span>
   <span id="fps" style="font-size:13px;color:var(--fg);font-weight:600;cursor:help"></span>
-  <span id="ver">v8 · zombis</span>
+  <span id="ver">v8.1 · zombis</span>
 </div>
 
 <div id="msg"><div>
@@ -405,7 +406,7 @@ $("startBtn").onclick = async () => {
     statusEl.textContent = `Cargando la red neuronal en ${nWorkers} motor${nWorkers > 1 ? "es" : ""} (unos 15 MB la primera vez)…`;
     const baseUrl = new URL(".", location.href).href;
     const infos = await Promise.all(Array.from({ length: nWorkers }, () => new Promise((res, rej) => {
-      const w = new Worker("gaze-worker.js"), wk = { w, busy: false };
+      const w = new Worker("gaze-worker.js?v=81"), wk = { w, busy: false };
       w.onmessage = e => {
         if (e.data.type === "ready") { w.onmessage = ev => onWorker(wk, ev); workers.push(wk); res(e.data); }
         else if (e.data.type === "error") rej(new Error(e.data.message));
@@ -676,7 +677,7 @@ function aimPoint(now) {
 function gameFrame(f) {
   const now = performance.now();
   aimHist.push([now, px, py]); if (aimHist.length > 60) aimHist.shift();
-  if (f.smile == null) return;
+  if (f.smile == null) { $("gSmileBar").parentNode.title = "El motor no envía la sonrisa: recarga la página con Ctrl+Shift+R"; return; }
   if (!smileTrigger(f.smile, now)) return;
   if (!G.running) { if (model) startGame(); return; }
   shoot(...aimPoint(now));
@@ -732,7 +733,11 @@ function gameOver() {
   hud();
   overlay("💀 Te han comido", `Puntos: ${G.score} · Récord: ${G.best}<br><br><b>Sonríe</b> para jugar otra vez`);
 }
-function overlay(title, html) { gOverlay.innerHTML = `<h2>${title}</h2><p>${html}</p>`; gOverlay.style.display = "flex"; }
+function overlay(title, html) {
+  gOverlay.innerHTML = `<h2>${title}</h2><p>${html}</p>`;
+  if (model) { const b = document.createElement("button"); b.className = "playBtn"; b.textContent = "▶ Jugar"; b.onclick = startGame; gOverlay.appendChild(b); }
+  gOverlay.style.display = "flex";
+}
 function gameLoop() {
   if (!G.on) return;
   const now = performance.now();
