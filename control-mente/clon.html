@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control_Mente · Tu clon digital</title>
+<style>
+  :root{--bg:#0e1116;--panel:#161b22;--line:#2a313c;--text:#e6edf3;--muted:#8b949e;--accent:#7c5cff;--ok:#3fb950;--bad:#f85149;--warn:#d29922}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.45}
+  header{padding:18px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header h1{margin:0;font-size:20px}
+  header p{margin:0;color:var(--muted);font-size:13px}
+  header a{color:var(--accent);font-size:13px}
+  main{display:grid;grid-template-columns:minmax(320px,1.5fr) minmax(280px,1fr);gap:20px;padding:20px 28px;max-width:1400px;margin:0 auto}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600}
+  .cloneWrap{position:relative;width:100%;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:#05070a}
+  #clone{width:100%;height:100%;display:block}
+  .badge{position:absolute;top:12px;left:12px;padding:6px 12px;border-radius:999px;font-size:13px;font-weight:700;background:#000a;border:1px solid var(--line)}
+  .badge.mirror{color:var(--ok);border-color:var(--ok)}
+  .badge.ai{color:#c9b8ff;border-color:var(--accent)}
+  .timer{position:absolute;left:0;right:0;bottom:0;height:5px;background:#0006}
+  .timer > div{height:100%;width:0;background:var(--ok)}
+  .prompt{position:absolute;top:56px;left:0;right:0;text-align:center;font-size:28px;font-weight:800;text-shadow:0 2px 12px #000}
+  .bubble{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);max-width:86%;background:#fff;color:#111;padding:12px 18px;border-radius:16px;font-size:18px;font-weight:600;box-shadow:0 6px 24px #0008;display:none}
+  .bubble::after{content:"";position:absolute;top:-10px;left:50%;margin-left:-10px;border:10px solid transparent;border-bottom-color:#fff;border-top:0}
+  .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;padding:24px;color:var(--muted)}
+  .center b{color:var(--text);font-size:20px}
+  .ring{width:120px;height:120px}
+  .preview{position:relative;width:100%;aspect-ratio:4/3;background:#000;border-radius:10px;overflow:hidden}
+  .preview video,.preview canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;font-weight:600}
+  button.secondary{background:#30363d}
+  button:disabled{opacity:.45;cursor:default}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .sub{color:var(--muted);font-size:13px}
+  .status{margin-top:10px;font-size:14px;min-height:22px}
+  ul.learned{margin:6px 0 0;padding-left:18px;font-size:14px}
+  ul.learned li.off{color:var(--muted)}
+  ol.steps{margin:0;padding-left:18px;font-size:14px;color:var(--muted)}
+  ol.steps li.now{color:var(--text);font-weight:700}
+  .disclaimer{max-width:1400px;margin:0 auto 30px;padding:0 28px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🪞 Control_Mente · Tu clon digital</h1>
+  <p>Captura tu cara, la imita durante 10 segundos y después se mueve sola.</p>
+  <a href="index.html">← Lector facial</a>
+</header>
+
+<main>
+  <section class="card">
+    <div class="cloneWrap">
+      <canvas id="clone" width="720" height="720"></canvas>
+      <div class="badge" id="badge" style="display:none"></div>
+      <div class="prompt" id="prompt"></div>
+      <div class="bubble" id="bubble"></div>
+      <div class="timer"><div id="timerBar"></div></div>
+      <div class="center" id="center">
+        <b>Crea tu clon</b>
+        <div>1. Captura de tu cara · 2. Modo espejo (10 s) · 3. La IA toma el control</div>
+        <button id="start">Activar cámara y empezar</button>
+        <div class="sub" id="loadStatus"></div>
+      </div>
+    </div>
+  </section>
+
+  <div style="display:grid;gap:20px;align-content:start">
+    <section class="card">
+      <h2>Tu cámara</h2>
+      <div class="preview">
+        <video id="video" playsinline muted></video>
+        <canvas id="pv"></canvas>
+      </div>
+      <div class="status" id="status">Esperando…</div>
+      <div class="row">
+        <button class="secondary" id="again" disabled>Repetir espejo</button>
+        <button class="secondary" id="recap" disabled>Nueva captura</button>
+        <button class="secondary" id="voice">🔊 Voz: sí</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Fases</h2>
+      <ol class="steps" id="steps">
+        <li>Captura: mira a la cámara con cara neutra y la boca cerrada.</li>
+        <li>Espejo (10 s): el clon copia tus gestos y los aprende.</li>
+        <li>IA: el clon se mueve, habla y te sigue con la mirada.</li>
+      </ol>
+      <div style="margin-top:12px" class="sub">Gestos aprendidos de ti:</div>
+      <ul class="learned" id="learned">
+        <li class="off" data-k="smile">Sonrisa</li>
+        <li class="off" data-k="jaw">Boca abierta</li>
+        <li class="off" data-k="browUp">Cejas arriba</li>
+        <li class="off" data-k="browDown">Ceño fruncido</li>
+      </ul>
+      <div class="sub" style="margin-top:6px">Si un gesto no se aprende, el clon usa una versión generada.</div>
+    </section>
+  </div>
+</main>
+
+<p class="disclaimer">Todo se procesa en tu navegador: ni la imagen ni el clon se envían a ningún sitio. El “modo IA” es una animación automática programada en esta página que combina los gestos que te ha grabado. No piensa ni lee tu mente.</p>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import Delaunator from "https://cdn.jsdelivr.net/npm/delaunator@5.0.1/+esm";
+
+const $ = id => document.getElementById(id);
+const video = $("video"), pv = $("pv"), pctx = pv.getContext("2d");
+const cv = $("clone"), ctx = cv.getContext("2d");
+const CW = cv.width, CH = cv.height, N = 478;
+const clamp = (x,a=0,b=1)=>Math.max(a,Math.min(b,x));
+const rad = d => d*Math.PI/180;
+
+// ---------- Índices de la malla de MediaPipe ----------
+const IDX = {
+  INNER_LIP:[78,191,80,81,82,13,312,311,310,415,308,324,318,402,317,14,87,178,88,95],
+  UPPER_LIP:[191,80,81,82,13,312,311,310,415,185,40,39,37,0,267,269,270,409],
+  LOWER_LIP:[95,88,178,87,14,317,402,318,324,146,91,181,84,17,314,405,321,375],
+  CORNERS:[78,308,61,291],
+  R_EYE:[33,246,161,160,159,158,157,173,133,155,154,153,145,144,163,7],
+  L_EYE:[263,466,388,387,386,385,384,398,362,382,381,380,374,373,390,249],
+  R_UPPER:[246,161,160,159,158,157,173], L_UPPER:[466,388,387,386,385,384,398],
+  R_BROW:[70,63,105,66,107,55,65,52,53,46], L_BROW:[300,293,334,296,336,285,295,282,283,276],
+  IRIS:[468,469,470,471,472,473,474,475,476,477],
+  STABLE:[10,151,9,8,168,6,197,195,5,4,1,234,454,127,356,33,263,133,362],
+};
+const INNER_SET = new Set(IDX.INNER_LIP);
+
+// ---------- Estado ----------
+let landmarker, drawer, W = 640, H = 480;
+let phase = "idle", phaseStart = 0, stableSince = 0;
+let voiceOn = true;
+// Datos del clon
+let TEX = null, TEX_OX = 0, TEX_OY = 0;   // textura recortada y su desplazamiento
+let NEU = null;                            // puntos neutros en px (x,y,z)
+let TRI = null, SRC_SIGN = null, ORDER = null, KEY = null;
+let VC = {x:0,y:0}, VS = 1, S = 50, CENTER = {x:0,y:0,z:0};
+let SKIN_R = "#c99", SKIN_L = "#c99", EYE_RATIO = {r:0.3,l:0.3}, EYE_OPEN = {r:8,l:8}, EYE_W = 30;
+const DX = new Float32Array(N), DY = new Float32Array(N), DZ = new Float32Array(N);
+const WORK = new Float32Array(N*3);
+let PROC = {}, LEARNED = {}, frames = [];
+
+// ---------- Arranque ----------
+$("start").onclick = async () => {
+  $("start").disabled = true;
+  try{
+    $("loadStatus").textContent = "Pidiendo permiso de cámara…";
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ width:{ideal:960}, height:{ideal:720}, facingMode:"user" }, audio:false });
+    video.srcObject = stream; await video.play();
+    W = video.videoWidth; H = video.videoHeight; pv.width = W; pv.height = H;
+    $("loadStatus").textContent = "Cargando el modelo de análisis facial…";
+    const fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    const opts = d => ({ baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate:d },
+      outputFaceBlendshapes:true, outputFacialTransformationMatrixes:true, runningMode:"VIDEO", numFaces:1 });
+    try { landmarker = await FaceLandmarker.createFromOptions(fileset, opts("GPU")); }
+    catch(e){ landmarker = await FaceLandmarker.createFromOptions(fileset, opts("CPU")); }
+    drawer = new DrawingUtils(pctx);
+    // “Despertar” la síntesis de voz con el clic del usuario
+    try { speechSynthesis.cancel(); speechSynthesis.getVoices(); } catch(e){}
+    $("center").style.display = "none";
+    setPhase("capture");
+    requestAnimationFrame(loop);
+  }catch(err){
+    console.error(err);
+    $("loadStatus").textContent = "No se pudo iniciar: " + (err && err.message || err) + ". Revisa el permiso de cámara y la conexión.";
+    $("start").disabled = false;
+  }
+};
+$("again").onclick = () => { if (TEX) setPhase("mirror"); };
+$("recap").onclick = () => setPhase("capture");
+$("voice").onclick = () => { voiceOn = !voiceOn; $("voice").textContent = voiceOn ? "🔊 Voz: sí" : "🔇 Voz: no"; if(!voiceOn) try{speechSynthesis.cancel()}catch(e){} };
+
+function setPhase(p){
+  phase = p; phaseStart = performance.now(); stableSince = 0;
+  stopTalking();
+  $("prompt").textContent = "";
+  const b = $("badge");
+  const steps = [...$("steps").children];
+  steps.forEach(li=>li.classList.remove("now"));
+  if (p === "capture"){ b.style.display="block"; b.className="badge"; b.textContent="① CAPTURA"; steps[0].classList.add("now"); }
+  if (p === "mirror"){ b.style.display="block"; b.className="badge mirror"; b.textContent="② ESPEJO · te imito"; steps[1].classList.add("now"); frames = []; }
+  if (p === "ai"){ b.style.display="block"; b.className="badge ai"; b.textContent="③ IA · ahora mando yo"; steps[2].classList.add("now"); initAI(); }
+  $("again").disabled = !TEX; $("recap").disabled = false;
+}
+
+// ---------- Utilidades de landmarks ----------
+function toPx(lms){
+  const P = new Float32Array(N*3);
+  for (let i=0;i<N;i++){ P[i*3]=lms[i].x*W; P[i*3+1]=lms[i].y*H; P[i*3+2]=lms[i].z*W; }
+  return P;
+}
+const dist = (P,a,b)=>Math.hypot(P[a*3]-P[b*3], P[a*3+1]-P[b*3+1]);
+function getPose(m){
+  return { pitch: Math.atan2(m[6], m[10])*180/Math.PI, yaw: Math.asin(clamp(-m[2],-1,1))*180/Math.PI, roll: Math.atan2(m[1], m[0])*180/Math.PI };
+}
+function eyeBlink(P){
+  const r = dist(P,159,145)/Math.max(1,dist(P,33,133));
+  const l = dist(P,386,374)/Math.max(1,dist(P,263,362));
+  return { r: clamp(1 - r/EYE_RATIO.r*1.05), l: clamp(1 - l/EYE_RATIO.l*1.05) };
+}
+
+// ---------- Bucle principal ----------
+let lastVT = -1;
+function loop(){
+  requestAnimationFrame(loop);
+  if (video.currentTime === lastVT || !video.videoWidth) return;
+  lastVT = video.currentTime;
+  const now = performance.now();
+  const res = landmarker.detectForVideo(video, now);
+  let live = null;
+  pctx.clearRect(0,0,W,H);
+  if (res.faceLandmarks && res.faceLandmarks.length){
+    const lms = res.faceLandmarks[0];
+    const bs = {}; if (res.faceBlendshapes && res.faceBlendshapes[0]) for (const c of res.faceBlendshapes[0].categories) bs[c.categoryName]=c.score;
+    const pose = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0] ? getPose(res.facialTransformationMatrixes[0].data) : {yaw:0,pitch:0,roll:0};
+    live = { lms, P: toPx(lms), bs, pose };
+    drawer.drawConnectors(lms, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color:"#7c5cff55", lineWidth:0.6 });
+  }
+
+  if (phase === "capture") stepCapture(live, now);
+  else if (phase === "mirror") stepMirror(live, now);
+  else if (phase === "ai") stepAI(live, now);
+}
+
+// ---------- Fase 1: captura ----------
+function stepCapture(live, now){
+  ctx.setTransform(1,0,0,1,0,0); bg();
+  let msg = "No veo tu cara", ok = false;
+  if (live){
+    const g = k => live.bs[k]||0;
+    const smile = (g("mouthSmileLeft")+g("mouthSmileRight"))/2;
+    const blink = (g("eyeBlinkLeft")+g("eyeBlinkRight"))/2;
+    if (Math.abs(live.pose.yaw) > 10 || Math.abs(live.pose.pitch) > 12) msg = "Mira de frente a la cámara";
+    else if (g("jawOpen") > 0.12) msg = "Cierra la boca";
+    else if (smile > 0.35) msg = "Pon cara neutra (sin sonreír)";
+    else if (blink > 0.45) msg = "Abre los ojos";
+    else { ok = true; msg = "¡Perfecto, no te muevas!"; }
+  }
+  if (ok){ if (!stableSince) stableSince = now; } else stableSince = 0;
+  const prog = stableSince ? clamp((now - stableSince)/1300) : 0;
+  $("timerBar").style.width = (prog*100)+"%"; $("timerBar").style.background = "var(--accent)";
+  // Indicador circular
+  ctx.strokeStyle = "#2a313c"; ctx.lineWidth = 10; ctx.beginPath(); ctx.arc(CW/2, CH/2, 90, 0, Math.PI*2); ctx.stroke();
+  ctx.strokeStyle = ok ? "#3fb950" : "#d29922"; ctx.beginPath(); ctx.arc(CW/2, CH/2, 90, -Math.PI/2, -Math.PI/2 + Math.PI*2*prog); ctx.stroke();
+  ctx.fillStyle = "#e6edf3"; ctx.font = "bold 26px system-ui"; ctx.textAlign = "center"; ctx.fillText(msg, CW/2, CH/2 + 150);
+  ctx.font = "16px system-ui"; ctx.fillStyle = "#8b949e"; ctx.fillText("Buena luz de frente y la cara entera en la imagen", CW/2, CH/2 + 180);
+  $("status").textContent = msg;
+  if (prog >= 1){ capture(live); setPhase("mirror"); }
+}
+
+function capture(live){
+  const P = live.P;
+  // Recorte de la cara para la textura
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  for (let i=0;i<N;i++){ const x=P[i*3], y=P[i*3+1]; if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; }
+  const m = 0.06*(maxX-minX);
+  TEX_OX = Math.max(0, Math.floor(minX-m)); TEX_OY = Math.max(0, Math.floor(minY-m));
+  const tw = Math.min(W, Math.ceil(maxX+m)) - TEX_OX, th = Math.min(H, Math.ceil(maxY+m)) - TEX_OY;
+  TEX = document.createElement("canvas"); TEX.width = tw; TEX.height = th;
+  const tctx = TEX.getContext("2d", { willReadFrequently:true });
+  tctx.drawImage(video, TEX_OX, TEX_OY, tw, th, 0, 0, tw, th);
+  NEU = P.slice();
+
+  // Vista: centrar y escalar la cara en el lienzo del clon
+  VC = { x:(minX+maxX)/2, y:(minY+maxY)/2 - 0.02*(maxY-minY) };
+  VS = 0.8*CH / Math.max(maxX-minX, maxY-minY);
+  S = dist(NEU,33,263); EYE_W = (dist(NEU,33,133)+dist(NEU,263,362))/2;
+  let cx=0,cy=0,cz=0; for (let i=0;i<N;i++){ cx+=NEU[i*3]; cy+=NEU[i*3+1]; cz+=NEU[i*3+2]; }
+  CENTER = { x:cx/N, y:cy/N, z:cz/N + 0.15*S };
+  EYE_RATIO = { r: dist(NEU,159,145)/dist(NEU,33,133), l: dist(NEU,386,374)/dist(NEU,263,362) };
+  EYE_OPEN = { r: dist(NEU,159,145), l: dist(NEU,386,374) };
+
+  // Triangulación de Delaunay sobre los puntos neutros
+  const coords = new Float64Array(N*2);
+  for (let i=0;i<N;i++){ coords[i*2]=NEU[i*3]; coords[i*2+1]=NEU[i*3+1]; }
+  const d = new Delaunator(coords);
+  const tri = [], sign = [];
+  for (let t=0;t<d.triangles.length;t+=3){
+    const a=d.triangles[t], b=d.triangles[t+1], c=d.triangles[t+2];
+    if (INNER_SET.has(a) && INNER_SET.has(b) && INNER_SET.has(c)) continue; // hueco de la boca
+    const cr = (NEU[b*3]-NEU[a*3])*(NEU[c*3+1]-NEU[a*3+1]) - (NEU[b*3+1]-NEU[a*3+1])*(NEU[c*3]-NEU[a*3]);
+    if (Math.abs(cr) < 1e-6) continue;
+    tri.push(a,b,c); sign.push(Math.sign(cr));
+  }
+  TRI = Uint16Array.from(tri); SRC_SIGN = Int8Array.from(sign);
+  const nt = SRC_SIGN.length; ORDER = new Uint16Array(nt); for (let i=0;i<nt;i++) ORDER[i]=i; KEY = new Float32Array(nt);
+
+  // Color de piel para los párpados
+  const sample = (a,b) => {
+    const x = Math.round((NEU[a*3]+NEU[b*3])/2 - TEX_OX), y = Math.round((NEU[a*3+1]+NEU[b*3+1])/2 - TEX_OY);
+    const px = tctx.getImageData(clamp(x-2,0,tw-5), clamp(y-2,0,th-5), 5, 5).data;
+    let r=0,g=0,bb=0; for (let i=0;i<px.length;i+=4){ r+=px[i]; g+=px[i+1]; bb+=px[i+2]; }
+    const n = px.length/4; return `rgb(${r/n|0},${g/n|0},${bb/n|0})`;
+  };
+  SKIN_R = sample(105,159); SKIN_L = sample(334,386);
+
+  buildProcedural();
+  LEARNED = {};
+  for (const li of $("learned").children){ li.className = "off"; li.textContent = li.textContent.replace(/^✓ /,""); }
+}
+
+// ---------- Deformaciones generadas (por si no se aprenden de ti) ----------
+function buildProcedural(){
+  const mk = () => new Float32Array(N*2);
+  const smile = mk(), jaw = mk(), up = mk(), down = mk();
+  const mx = (NEU[61*3]+NEU[291*3])/2, my = (NEU[13*3+1]+NEU[14*3+1])/2;
+  const y13 = NEU[13*3+1];
+  const upperSet = new Set(IDX.UPPER_LIP), lowerSet = new Set(IDX.LOWER_LIP), cornerSet = new Set(IDX.CORNERS);
+  const brows = [...IDX.R_BROW, ...IDX.L_BROW];
+  const fcx = (NEU[33*3]+NEU[263*3])/2;
+  for (let i=0;i<N;i++){
+    const x = NEU[i*3], y = NEU[i*3+1];
+    // Sonrisa: comisuras hacia fuera y arriba
+    for (const c of [61,291]){
+      const cx = NEU[c*3], cy = NEU[c*3+1];
+      const w = Math.exp(-((x-cx)**2+(y-cy)**2)/(2*(0.28*S)**2));
+      const ox = Math.sign(cx-mx);
+      smile[i*2] += ox*0.13*S*w; smile[i*2+1] += -0.08*S*w;
+    }
+    // Mandíbula: todo lo que está bajo el labio superior baja
+    let t;
+    if (upperSet.has(i)) t = 0; else if (lowerSet.has(i)) t = 1; else if (cornerSet.has(i)) t = 0.45;
+    else t = clamp((y - y13 + 0.02*S)/(0.08*S));
+    const gx = Math.exp(-(((x-mx)/(1.0*S))**2));
+    jaw[i*2+1] = 0.42*S*t*gx;
+    // Cejas
+    let wb = 0; for (const b of brows){ const w = Math.exp(-((x-NEU[b*3])**2+(y-NEU[b*3+1])**2)/(2*(0.16*S)**2)); if (w>wb) wb=w; }
+    up[i*2+1] = -0.13*S*wb;
+    down[i*2+1] = 0.06*S*wb; down[i*2] = -Math.sign(x-fcx)*0.04*S*wb;
+  }
+  PROC = { smile, jaw, browUp:up, browDown:down };
+}
+
+// ---------- Render del clon (malla texturizada) ----------
+function bg(){
+  const g = ctx.createRadialGradient(CW/2, CH*0.45, 40, CW/2, CH/2, CW*0.75);
+  g.addColorStop(0, "#1b1640"); g.addColorStop(1, "#05070a");
+  ctx.fillStyle = g; ctx.fillRect(0,0,CW,CH);
+}
+function render(P, blinkR, blinkL){
+  for (let i=0;i<N;i++){
+    DX[i] = CW/2 - (P[i*3]-VC.x)*VS;   // espejado, como un espejo real
+    DY[i] = CH/2 + (P[i*3+1]-VC.y)*VS;
+    DZ[i] = P[i*3+2];
+  }
+  ctx.setTransform(1,0,0,1,0,0); bg();
+  // Interior de la boca
+  ctx.fillStyle = "#1c0609"; ctx.beginPath();
+  IDX.INNER_LIP.forEach((k,j)=> j ? ctx.lineTo(DX[k],DY[k]) : ctx.moveTo(DX[k],DY[k])); ctx.closePath(); ctx.fill();
+  // Ordenar triángulos de atrás hacia delante
+  const nt = SRC_SIGN.length;
+  for (let t=0;t<nt;t++) KEY[t] = DZ[TRI[t*3]]+DZ[TRI[t*3+1]]+DZ[TRI[t*3+2]];
+  ORDER.sort((a,b)=>KEY[b]-KEY[a]);
+  for (let k=0;k<nt;k++){
+    const t = ORDER[k], a=TRI[t*3], b=TRI[t*3+1], c=TRI[t*3+2];
+    const x0=DX[a],y0=DY[a],x1=DX[b],y1=DY[b],x2=DX[c],y2=DY[c];
+    const cr = (x1-x0)*(y2-y0)-(y1-y0)*(x2-x0);
+    if (cr*SRC_SIGN[t] >= 0) continue; // cara trasera (el espejo invierte el signo)
+    drawTri(NEU[a*3]-TEX_OX, NEU[a*3+1]-TEX_OY, NEU[b*3]-TEX_OX, NEU[b*3+1]-TEX_OY, NEU[c*3]-TEX_OX, NEU[c*3+1]-TEX_OY, x0,y0,x1,y1,x2,y2);
+  }
+  // Párpados al parpadear
+  lid(IDX.R_EYE, SKIN_R, blinkR); lid(IDX.L_EYE, SKIN_L, blinkL);
+}
+function lid(ids, color, blink){
+  const a = clamp((blink-0.3)/0.45); if (a <= 0) return;
+  ctx.globalAlpha = a; ctx.fillStyle = color; ctx.beginPath();
+  ids.forEach((k,j)=> j ? ctx.lineTo(DX[k],DY[k]) : ctx.moveTo(DX[k],DY[k])); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = "rgba(40,20,20,.7)"; ctx.lineWidth = 2; ctx.beginPath();
+  const half = ids.slice(8).concat([ids[0]]);
+  ctx.moveTo(DX[ids[8]],DY[ids[8]]); half.forEach(k=>ctx.lineTo(DX[k],DY[k])); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+function drawTri(u0,v0,u1,v1,u2,v2, x0,y0,x1,y1,x2,y2){
+  // Triángulo de destino ligeramente ampliado para ocultar las juntas
+  const cx=(x0+x1+x2)/3, cy=(y0+y1+y2)/3, e=0.8;
+  const ex = (x,y)=>{ const dx=x-cx, dy=y-cy, l=Math.hypot(dx,dy)||1; return [x+dx/l*e, y+dy/l*e]; };
+  const p0=ex(x0,y0), p1=ex(x1,y1), p2=ex(x2,y2);
+  ctx.save(); ctx.beginPath(); ctx.moveTo(p0[0],p0[1]); ctx.lineTo(p1[0],p1[1]); ctx.lineTo(p2[0],p2[1]); ctx.closePath(); ctx.clip();
+  const den = u0*v1 + v0*u2 + u1*v2 - v1*u2 - v0*u1 - u0*v2;
+  if (Math.abs(den) < 1e-9){ ctx.restore(); return; }
+  const a = (x0*v1 + v0*x2 + x1*v2 - v1*x2 - v0*x1 - x0*v2)/den;
+  const b = (u0*x1 + x0*u2 + u1*x2 - x1*u2 - x0*u1 - u0*x2)/den;
+  const c = (u0*v1*x2 + v0*x1*u2 + x0*u1*v2 - x0*v1*u2 - v0*u1*x2 - u0*x1*v2)/den;
+  const d = (y0*v1 + v0*y2 + y1*v2 - v1*y2 - v0*y1 - y0*v2)/den;
+  const e2= (u0*y1 + y0*u2 + u1*y2 - y1*u2 - y0*u1 - u0*y2)/den;
+  const f = (u0*v1*y2 + v0*y1*u2 + y0*u1*v2 - y0*v1*u2 - v0*u1*y2 - u0*y1*v2)/den;
+  ctx.setTransform(a, d, b, e2, c, f);
+  ctx.drawImage(TEX, 0, 0);
+  ctx.restore();
+}
+
+// ---------- Fase 2: espejo ----------
+const PROMPTS = ["¡Sonríe!", "Abre la boca", "Sube las cejas", "Frunce el ceño", "Gira un poco la cabeza"];
+function stepMirror(live, now){
+  const el = now - phaseStart, T = 10000;
+  $("timerBar").style.width = (clamp(el/T)*100)+"%"; $("timerBar").style.background = "var(--ok)";
+  const left = Math.ceil((T-el)/1000);
+  $("prompt").textContent = PROMPTS[Math.min(PROMPTS.length-1, Math.floor(el/2000))];
+  if (live){
+    const bl = eyeBlink(live.P);
+    render(live.P, bl.r, bl.l);
+    record(live);
+    $("status").textContent = `Modo espejo: te imito y aprendo tus gestos (${left} s)`;
+  } else {
+    $("status").textContent = "No te veo. Vuelve a ponerte frente a la cámara.";
+  }
+  if (el >= T){ learn(); setPhase("ai"); }
+}
+// Alinea la cara en vivo con la neutra (similitud 2D con puntos estables) y guarda la diferencia
+function record(live){
+  const P = live.P, st = IDX.STABLE;
+  let qx=0,qy=0,px=0,py=0; for (const i of st){ qx+=P[i*3]; qy+=P[i*3+1]; px+=NEU[i*3]; py+=NEU[i*3+1]; }
+  const n = st.length; qx/=n; qy/=n; px/=n; py/=n;
+  let re=0, im=0, qq=0;
+  for (const i of st){
+    const ax=P[i*3]-qx, ay=P[i*3+1]-qy, bx=NEU[i*3]-px, by=NEU[i*3+1]-py;
+    re += bx*ax + by*ay; im += by*ax - bx*ay; qq += ax*ax + ay*ay;
+  }
+  const cr = re/qq, ci = im/qq;
+  const delta = new Float32Array(N*2);
+  for (let i=0;i<N;i++){
+    const ax=P[i*3]-qx, ay=P[i*3+1]-qy;
+    delta[i*2]   = cr*ax - ci*ay + px - NEU[i*3];
+    delta[i*2+1] = ci*ax + cr*ay + py - NEU[i*3+1];
+  }
+  const g = k => live.bs[k]||0;
+  frames.push({ delta, smile:(g("mouthSmileLeft")+g("mouthSmileRight"))/2, jaw:g("jawOpen"),
+    browUp:g("browInnerUp")*0.6+(g("browOuterUpLeft")+g("browOuterUpRight"))*0.2, browDown:(g("browDownLeft")+g("browDownRight"))/2 });
+}
+function learn(){
+  const thr = { smile:0.4, jaw:0.3, browUp:0.35, browDown:0.35 };
+  for (const k of Object.keys(thr)){
+    let best = null; for (const f of frames) if (!best || f[k] > best[k]) best = f;
+    const li = $("learned").querySelector(`[data-k="${k}"]`);
+    if (best && best[k] >= thr[k]){ LEARNED[k] = best.delta; li.className = ""; li.textContent = "✓ " + li.textContent.replace(/^✓ /,""); }
+    else { delete LEARNED[k]; li.className = "off"; }
+  }
+  frames = [];
+}
+
+// ---------- Fase 3: la IA maneja el clon ----------
+const PHRASES = [
+  { t:"Hola. A partir de ahora, esta cara la muevo yo.", mood:"smile" },
+  { t:"He aprendido tus gestos en solo diez segundos.", mood:"browUp" },
+  { t:"Muévete un poco. Te estoy siguiendo con la mirada.", mood:"none" },
+  { t:"Mmm… déjame pensar en algo interesante.", mood:"think" },
+  { t:"¿A que me queda bien tu cara?", mood:"smile" },
+  { t:"Tranquilidad: todo esto ocurre solo en tu navegador.", mood:"none" },
+  { t:"Si quieres recuperar el control, pulsa Repetir espejo.", mood:"browUp" },
+];
+let ai;
+function initAI(){
+  ai = { yaw:0, pitch:0, roll:0, gx:0, gy:0, w:{smile:0,jaw:0,browUp:0,browDown:0}, target:{smile:0,browUp:0,browDown:0},
+    think:false, moodUntil:0, nextBlink:performance.now()+1500, blinkT:-1, phraseIdx:0, nextSpeak:performance.now()+700, kick:0 };
+}
+function setMood(m, now, dur){
+  const T = ai.target; T.smile = 0; T.browUp = 0; T.browDown = 0; ai.think = false;
+  if (m === "smile") T.smile = 0.9;
+  if (m === "softsmile"){ T.smile = 0.4; T.browUp = 0.25; }
+  if (m === "browUp") T.browUp = 0.8;
+  if (m === "think"){ T.browDown = 0.6; ai.think = true; }
+  ai.moodUntil = now + (dur || 2500 + Math.random()*2500);
+}
+function stepAI(live, now){
+  const t = now/1000;
+  $("timerBar").style.width = "0%";
+  // Estado de ánimo aleatorio cuando no habla
+  if (now > ai.moodUntil && !talking.on){
+    const opts = ["none","softsmile","smile","browUp","think","none"];
+    setMood(opts[Math.floor(Math.random()*opts.length)], now);
+  }
+  // Hablar
+  if (!talking.on && now > ai.nextSpeak){
+    const p = PHRASES[ai.phraseIdx % PHRASES.length]; ai.phraseIdx++;
+    setMood(p.mood, now, 4000); say(p.t);
+  }
+  // Mirada y cabeza: sigue a la persona si la ve, si no deambula
+  let yawT = 7*Math.sin(t*0.45) + 4*Math.sin(t*1.1), pitchT = 4*Math.sin(t*0.6+1), rollT = 3*Math.sin(t*0.35);
+  let gxT = 0.3*Math.sin(t*0.7), gyT = 0;
+  if (live){
+    const ux = live.lms[1].x, uy = live.lms[1].y;
+    yawT = clamp((ux-0.5)*55, -22, 22) + 3*Math.sin(t*0.9);
+    pitchT = clamp((uy-0.5)*35, -14, 14) + 2*Math.sin(t*0.7);
+    gxT = clamp((ux-0.5)*2.5, -1, 1); gyT = clamp((uy-0.5)*2, -1, 1);
+    $("status").textContent = "La IA controla tu clon y te sigue con la mirada.";
+  } else $("status").textContent = "La IA controla tu clon (no te veo, así que mira a su aire).";
+  if (ai.think){ pitchT -= 9; gyT = -0.9; gxT = 0.6; rollT += 5; }
+  const k = 0.06;
+  ai.yaw += (yawT-ai.yaw)*k; ai.pitch += (pitchT-ai.pitch)*k; ai.roll += (rollT-ai.roll)*k;
+  ai.gx += (gxT-ai.gx)*0.15; ai.gy += (gyT-ai.gy)*0.15;
+  for (const key of ["smile","browUp","browDown"]) ai.w[key] += (ai.target[key]-ai.w[key])*0.08;
+  // Boca al hablar
+  ai.kick *= 0.85;
+  const jawT = talking.on ? clamp(0.18 + 0.45*Math.abs(Math.sin(t*13 + Math.sin(t*3.1)*2)) + ai.kick, 0, 0.9) : 0;
+  ai.w.jaw += (jawT - ai.w.jaw)*0.35;
+  // Parpadeo
+  let blink = 0;
+  if (ai.blinkT < 0 && now > ai.nextBlink) ai.blinkT = now;
+  if (ai.blinkT >= 0){
+    const p = (now - ai.blinkT)/190;
+    if (p >= 1){ ai.blinkT = -1; ai.nextBlink = now + 1800 + Math.random()*3500; } else blink = Math.sin(Math.PI*p);
+  }
+  compose(blink);
+  render(WORK, blink, blink);
+}
+function compose(blink){
+  const P = WORK;
+  for (let i=0;i<N;i++){ P[i*3]=NEU[i*3]; P[i*3+1]=NEU[i*3+1]; P[i*3+2]=NEU[i*3+2]; }
+  for (const key of ["smile","jaw","browUp","browDown"]){
+    const w = ai.w[key]; if (w < 0.005) continue;
+    const D = LEARNED[key] || PROC[key];
+    for (let i=0;i<N;i++){ P[i*3] += D[i*2]*w; P[i*3+1] += D[i*2+1]*w; }
+  }
+  // Párpados superiores
+  for (const i of IDX.R_UPPER) P[i*3+1] += blink*EYE_OPEN.r*0.85;
+  for (const i of IDX.L_UPPER) P[i*3+1] += blink*EYE_OPEN.l*0.85;
+  // Iris (la mirada)
+  const ox = ai.gx*EYE_W*0.14, oy = ai.gy*EYE_W*0.08;
+  for (const i of IDX.IRIS){ P[i*3] += ox; P[i*3+1] += oy; }
+  // Rotación de la cabeza
+  const cp=Math.cos(rad(ai.pitch)), sp=Math.sin(rad(ai.pitch)), cy=Math.cos(rad(ai.yaw)), sy=Math.sin(rad(ai.yaw)), cr=Math.cos(rad(ai.roll)), sr=Math.sin(rad(ai.roll));
+  for (let i=0;i<N;i++){
+    const x=P[i*3]-CENTER.x, y=P[i*3+1]-CENTER.y, z=P[i*3+2]-CENTER.z;
+    const y1 = y*cp - z*sp, z1 = y*sp + z*cp;
+    const x2 = x*cy - z1*sy, z2 = x*sy + z1*cy;
+    P[i*3]   = x2*cr - y1*sr + CENTER.x;
+    P[i*3+1] = x2*sr + y1*cr + CENTER.y;
+    P[i*3+2] = z2 + CENTER.z;
+  }
+}
+
+// ---------- Voz y bocadillo ----------
+const talking = { on:false, timer:0 };
+function say(text){
+  const b = $("bubble"); b.style.display = "block"; b.textContent = "";
+  talking.on = true;
+  let i = 0; clearInterval(talking.typer);
+  talking.typer = setInterval(()=>{ b.textContent = text.slice(0, ++i); if (i >= text.length) clearInterval(talking.typer); }, 45);
+  const done = () => { if (!talking.on) return; talking.on = false; ai.nextSpeak = performance.now() + 2500 + Math.random()*2500; setTimeout(()=>{ if(!talking.on) b.style.display="none"; }, 1200); };
+  let spoke = false;
+  if (voiceOn && "speechSynthesis" in window){
+    try{
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "es-ES"; u.rate = 1.03;
+      const v = speechSynthesis.getVoices().find(v=>/^es(-|_)ES/i.test(v.lang)) || speechSynthesis.getVoices().find(v=>/^es/i.test(v.lang));
+      if (v) u.voice = v;
+      u.onboundary = () => { if (ai) ai.kick = 0.35; };
+      u.onend = done; u.onerror = done;
+      speechSynthesis.cancel(); speechSynthesis.speak(u); spoke = true;
+    }catch(e){}
+  }
+  clearTimeout(talking.timer);
+  talking.timer = setTimeout(done, spoke ? 12000 : 600 + text.length*60);
+}
+function stopTalking(){
+  talking.on = false; clearTimeout(talking.timer); clearInterval(talking.typer);
+  try{ speechSynthesis.cancel(); }catch(e){}
+  $("bubble").style.display = "none";
+}
+</script>
+</body>
+</html>
