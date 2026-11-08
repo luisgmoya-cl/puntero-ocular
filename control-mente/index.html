@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control_Mente · Lector facial por webcam</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --line:#2a313c; --text:#e6edf3; --muted:#8b949e;
+    --accent:#7c5cff; --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.45}
+  header{padding:20px 28px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header h1{margin:0;font-size:20px;letter-spacing:.3px}
+  header p{margin:0;color:var(--muted);font-size:13px}
+  main{display:grid;grid-template-columns:minmax(320px,1.2fr) minmax(300px,1fr);gap:20px;padding:20px 28px;max-width:1400px;margin:0 auto}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600}
+  .stage{position:relative;width:100%;aspect-ratio:4/3;background:#000;border-radius:10px;overflow:hidden}
+  video,canvas.overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  .stage .msg{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:20px;color:var(--muted)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:15px;cursor:pointer;font-weight:600}
+  button.secondary{background:#30363d}
+  button:disabled{opacity:.5;cursor:default}
+  .reading{font-size:22px;font-weight:600;min-height:64px;margin:4px 0 6px}
+  .sub{color:var(--muted);font-size:13px}
+  .bars{display:grid;gap:8px}
+  .bar{display:grid;grid-template-columns:120px 1fr 44px;align-items:center;gap:10px;font-size:14px}
+  .track{height:10px;background:#0b0e13;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+  .fill{height:100%;width:0;background:var(--accent);transition:width .15s linear;border-radius:6px}
+  .num{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .stat{background:#0b0e13;border:1px solid var(--line);border-radius:8px;padding:10px}
+  .stat .k{font-size:12px;color:var(--muted)}
+  .stat .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+  .gaze{position:relative;width:120px;height:120px;border-radius:50%;border:1px solid var(--line);background:#0b0e13;margin:auto}
+  .gaze .dot{position:absolute;width:14px;height:14px;border-radius:50%;background:var(--ok);left:53px;top:53px;transition:left .1s,top .1s}
+  .gaze::before,.gaze::after{content:"";position:absolute;background:var(--line)}
+  .gaze::before{left:50%;top:0;bottom:0;width:1px}
+  .gaze::after{top:50%;left:0;right:0;height:1px}
+  .side{display:grid;gap:20px;align-content:start}
+  input[type=text]{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#0b0e13;color:var(--text);font-size:15px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  .answer{font-size:30px;font-weight:700;margin-top:12px;min-height:40px}
+  .answer.yes{color:var(--ok)} .answer.no{color:var(--bad)}
+  .disclaimer{max-width:1400px;margin:0 auto 30px;padding:0 28px;color:var(--muted);font-size:12px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--muted)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .chips button{background:#21262d;font-size:13px;padding:6px 10px;font-weight:500}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 Control_Mente · Lector facial</h1>
+  <p>Analiza tu expresión, mirada, parpadeo y gestos de cabeza en tiempo real. Todo se procesa en tu navegador; ninguna imagen sale de tu ordenador.</p>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Cámara</h2>
+    <div class="stage">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay" class="overlay"></canvas>
+      <div class="msg" id="msg">
+        <div>Pulsa para activar la webcam y cargar el modelo de análisis facial.</div>
+        <button id="start">Activar cámara</button>
+        <div class="sub" id="status"></div>
+      </div>
+    </div>
+    <div class="row">
+      <button class="secondary" id="toggleMesh" disabled>Ocultar malla</button>
+      <span class="pill" id="fps">— fps</span>
+      <span class="pill" id="faceState">Sin rostro</span>
+    </div>
+
+    <div style="margin-top:18px">
+      <h2>Lo que “leo” ahora</h2>
+      <div class="reading" id="reading">…</div>
+      <div class="sub" id="readingWhy">Interpretación a partir de señales visibles, no de pensamientos.</div>
+    </div>
+  </section>
+
+  <div class="side">
+    <section class="card">
+      <h2>Emociones aparentes</h2>
+      <div class="bars" id="bars"></div>
+    </section>
+
+    <section class="card">
+      <h2>Mirada y cabeza</h2>
+      <div class="grid2">
+        <div><div class="gaze"><div class="dot" id="gazeDot"></div></div>
+          <div class="sub" style="text-align:center;margin-top:6px" id="gazeTxt">—</div></div>
+        <div style="display:grid;gap:8px">
+          <div class="stat"><div class="k">Giro (izq/dcha)</div><div class="v" id="yaw">—</div></div>
+          <div class="stat"><div class="k">Inclinación (arriba/abajo)</div><div class="v" id="pitch">—</div></div>
+          <div class="stat"><div class="k">Ladeo</div><div class="v" id="roll">—</div></div>
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:10px">
+        <div class="stat"><div class="k">Parpadeos</div><div class="v" id="blinks">0</div></div>
+        <div class="stat"><div class="k">Parpadeos/min</div><div class="v" id="bpm">—</div></div>
+      </div>
+      <div class="sub" style="margin-top:8px" id="blinkNote">En reposo lo habitual son ~15–20 por minuto.</div>
+    </section>
+
+    <section class="card">
+      <h2>Juego: responde sin hablar</h2>
+      <div class="sub">Escribe o elige una pregunta, pulsa “Preguntar” y responde moviendo la cabeza: asiente para <b>sí</b>, niega para <b>no</b>.</div>
+      <div class="row"><input type="text" id="question" placeholder="¿Te gusta el chocolate?"></div>
+      <div class="chips" id="chips"></div>
+      <div class="row"><button id="ask" disabled>Preguntar</button><span class="sub" id="askState"></span></div>
+      <div class="answer" id="answer"></div>
+    </section>
+  </div>
+</main>
+
+<p class="disclaimer">Aviso honesto: ningún software puede leer pensamientos a través de una cámara. Este programa detecta movimientos de músculos faciales (con el modelo Face Landmarker de MediaPipe) y los traduce a estados probables. Las expresiones no siempre reflejan lo que sientes, así que tómalo como una estimación.</p>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const $ = id => document.getElementById(id);
+const video = $("video"), canvas = $("overlay"), ctx = canvas.getContext("2d");
+let landmarker = null, drawer = null, showMesh = true, running = false;
+
+// ---------- UI de barras ----------
+const EMOTIONS = [
+  ["alegria","Alegría","#3fb950"],
+  ["sorpresa","Sorpresa","#58a6ff"],
+  ["enfado","Enfado","#f85149"],
+  ["tristeza","Tristeza","#a371f7"],
+  ["asco","Desagrado","#d29922"],
+  ["concentracion","Concentración","#db61a2"],
+  ["neutral","Neutral","#8b949e"],
+];
+const barEls = {};
+for (const [k,label,color] of EMOTIONS){
+  const row = document.createElement("div"); row.className="bar";
+  row.innerHTML = `<span>${label}</span><div class="track"><div class="fill" style="background:${color}"></div></div><span class="num">0%</span>`;
+  $("bars").appendChild(row);
+  barEls[k] = { fill: row.querySelector(".fill"), num: row.querySelector(".num") };
+}
+
+// ---------- utilidades ----------
+const clamp = (x,a=0,b=1)=>Math.max(a,Math.min(b,x));
+const smooth = {};
+const ema = (k,v,a=0.25)=> (smooth[k] = smooth[k]===undefined ? v : smooth[k]*(1-a)+v*a);
+const deg = r => r*180/Math.PI;
+
+// ---------- arranque ----------
+$("start").onclick = async () => {
+  $("start").disabled = true;
+  try{
+    $("status").textContent = "Pidiendo permiso de cámara…";
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ width:640, height:480, facingMode:"user" }, audio:false });
+    video.srcObject = stream; await video.play();
+
+    $("status").textContent = "Cargando modelo de análisis facial (unos segundos)…";
+    const fileset = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    const opts = (delegate)=>({
+      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate },
+      outputFaceBlendshapes:true, outputFacialTransformationMatrixes:true, runningMode:"VIDEO", numFaces:1
+    });
+    try { landmarker = await FaceLandmarker.createFromOptions(fileset, opts("GPU")); }
+    catch(e){ landmarker = await FaceLandmarker.createFromOptions(fileset, opts("CPU")); }
+
+    drawer = new DrawingUtils(ctx);
+    $("msg").style.display = "none";
+    $("toggleMesh").disabled = false; $("ask").disabled = false;
+    running = true; requestAnimationFrame(loop);
+  }catch(err){
+    console.error(err);
+    $("status").textContent = "No se pudo iniciar: " + (err && err.message ? err.message : err) + ". Revisa el permiso de cámara y la conexión a internet.";
+    $("start").disabled = false;
+  }
+};
+$("toggleMesh").onclick = () => { showMesh = !showMesh; $("toggleMesh").textContent = showMesh ? "Ocultar malla" : "Mostrar malla"; };
+
+// ---------- estado temporal ----------
+let lastVideoTime = -1, frames = 0, fpsT = performance.now();
+let blinkCount = 0, eyesClosed = false; const blinkTimes = [];
+const poseHist = []; // {t, yaw, pitch}
+const startT = performance.now();
+
+// ---------- bucle principal ----------
+function loop(){
+  if(!running) return;
+  if (video.currentTime !== lastVideoTime && video.videoWidth){
+    lastVideoTime = video.currentTime;
+    if (canvas.width !== video.videoWidth){ canvas.width = video.videoWidth; canvas.height = video.videoHeight; }
+    const now = performance.now();
+    const res = landmarker.detectForVideo(video, now);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    if (res.faceLandmarks && res.faceLandmarks.length){
+      $("faceState").textContent = "Rostro detectado";
+      if (showMesh){
+        const lm = res.faceLandmarks[0];
+        drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color:"#7c5cff40", lineWidth:0.6 });
+        drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_EYE, { color:"#3fb950", lineWidth:1.5 });
+        drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE, { color:"#3fb950", lineWidth:1.5 });
+        drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LIPS, { color:"#f85149", lineWidth:1.5 });
+        drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW, { color:"#d29922", lineWidth:1.5 });
+        drawer.drawConnectors(lm, FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW, { color:"#d29922", lineWidth:1.5 });
+      }
+      const bs = {};
+      if (res.faceBlendshapes && res.faceBlendshapes[0]) for (const c of res.faceBlendshapes[0].categories) bs[c.categoryName] = c.score;
+      const pose = res.facialTransformationMatrixes && res.facialTransformationMatrixes[0] ? getPose(res.facialTransformationMatrixes[0].data) : null;
+      analyze(bs, pose, now);
+    } else {
+      $("faceState").textContent = "Sin rostro";
+      $("reading").textContent = "No veo ninguna cara. Colócate frente a la cámara.";
+    }
+
+    frames++;
+    if (now - fpsT > 1000){ $("fps").textContent = frames + " fps"; frames = 0; fpsT = now; }
+  }
+  requestAnimationFrame(loop);
+}
+
+// Matriz 4x4 en orden por columnas -> ángulos de Euler
+function getPose(m){
+  const r00=m[0], r10=m[1], r20=m[2], r21=m[6], r22=m[10];
+  const pitch = deg(Math.atan2(r21, r22));
+  const yaw   = deg(Math.asin(clamp(-r20,-1,1)));
+  const roll  = deg(Math.atan2(r10, r00));
+  return { yaw, pitch, roll };
+}
+
+function analyze(b, pose, now){
+  const g = k => b[k] || 0;
+  const avg = (a,c)=> (g(a)+g(c))/2;
+
+  const smile = avg("mouthSmileLeft","mouthSmileRight");
+  const frown = avg("mouthFrownLeft","mouthFrownRight");
+  const browDown = avg("browDownLeft","browDownRight");
+  const browUp = g("browInnerUp");
+  const browOuter = avg("browOuterUpLeft","browOuterUpRight");
+  const eyeWide = avg("eyeWideLeft","eyeWideRight");
+  const squint = avg("eyeSquintLeft","eyeSquintRight");
+  const sneer = avg("noseSneerLeft","noseSneerRight");
+  const press = avg("mouthPressLeft","mouthPressRight");
+  const jaw = g("jawOpen");
+  const cheek = avg("cheekSquintLeft","cheekSquintRight");
+  const upperUp = avg("mouthUpperUpLeft","mouthUpperUpRight");
+
+  const raw = {
+    alegria: clamp(smile*1.3 + cheek*0.4),
+    sorpresa: clamp(browUp*0.45 + browOuter*0.35 + eyeWide*0.5 + jaw*0.6 - smile*0.5),
+    enfado: clamp(browDown*1.0 + press*0.3 + sneer*0.4 - smile*0.6),
+    tristeza: clamp(frown*1.2 + browUp*0.35 - smile*0.8 - jaw*0.3),
+    asco: clamp(sneer*1.2 + upperUp*0.5 - smile*0.4),
+    concentracion: clamp(browDown*0.5 + squint*0.6 - smile*0.5 - jaw*0.4),
+  };
+  const E = {};
+  for (const k in raw) E[k] = ema("e_"+k, raw[k]);
+  const maxOther = Math.max(...Object.values(E));
+  E.neutral = ema("e_neutral", clamp(1 - maxOther*1.4));
+  for (const k in E){ barEls[k].fill.style.width = (E[k]*100).toFixed(0)+"%"; barEls[k].num.textContent = (E[k]*100).toFixed(0)+"%"; }
+
+  // Mirada (respecto a la persona: + = su derecha / arriba)
+  const h = ema("gh", ((g("eyeLookInLeft")+g("eyeLookOutRight")) - (g("eyeLookOutLeft")+g("eyeLookInRight")))/2, 0.35);
+  const v = ema("gv", avg("eyeLookUpLeft","eyeLookUpRight") - avg("eyeLookDownLeft","eyeLookDownRight"), 0.35);
+  // En pantalla el vídeo está espejado: su derecha aparece a la izquierda
+  $("gazeDot").style.left = (53 - clamp(h,-1,1)*50) + "px";
+  $("gazeDot").style.top  = (53 - clamp(v,-1,1)*50) + "px";
+  const gx = h > 0.25 ? "a tu derecha" : h < -0.25 ? "a tu izquierda" : "";
+  const gy = v > 0.2 ? "arriba" : v < -0.25 ? "abajo" : "";
+  const gazeTxt = !gx && !gy ? "Mirando al frente" : "Mirando " + [gy,gx].filter(Boolean).join(" y ");
+  $("gazeTxt").textContent = gazeTxt;
+
+  // Parpadeo
+  const blink = avg("eyeBlinkLeft","eyeBlinkRight");
+  if (!eyesClosed && blink > 0.55){ eyesClosed = true; }
+  else if (eyesClosed && blink < 0.35){ eyesClosed = false; blinkCount++; blinkTimes.push(now); }
+  while (blinkTimes.length && now - blinkTimes[0] > 60000) blinkTimes.shift();
+  $("blinks").textContent = blinkCount;
+  const elapsed = Math.min(60000, now - startT);
+  const bpm = elapsed > 10000 ? Math.round(blinkTimes.length * 60000 / elapsed) : null;
+  $("bpm").textContent = bpm === null ? "midiendo…" : bpm;
+
+  // Pose
+  let gesture = null;
+  if (pose){
+    $("yaw").textContent = pose.yaw.toFixed(0)+"°";
+    $("pitch").textContent = pose.pitch.toFixed(0)+"°";
+    $("roll").textContent = pose.roll.toFixed(0)+"°";
+    poseHist.push({ t:now, yaw:pose.yaw, pitch:pose.pitch });
+    while (poseHist.length && now - poseHist[0].t > 1400) poseHist.shift();
+    gesture = detectGesture();
+    handleQuestion(gesture, now);
+  }
+
+  // Interpretación
+  $("reading").textContent = interpret(E, {h, v, bpm, blinkClosed: blink > 0.6, gesture, roll: pose ? pose.roll : 0});
+}
+
+// Detecta asentir/negar contando oscilaciones en ventana corta
+function detectGesture(){
+  if (poseHist.length < 8) return null;
+  const osc = key => {
+    const vals = poseHist.map(p=>p[key]);
+    const range = Math.max(...vals) - Math.min(...vals);
+    let changes = 0, dir = 0;
+    for (let i=2;i<vals.length;i++){
+      const d = vals[i] - vals[i-2];
+      if (Math.abs(d) < 1.2) continue;
+      const s = Math.sign(d);
+      if (dir && s !== dir) changes++;
+      dir = s;
+    }
+    return { range, changes };
+  };
+  const p = osc("pitch"), y = osc("yaw");
+  if (p.range > 10 && p.changes >= 2 && p.range > y.range*1.4) return "si";
+  if (y.range > 12 && y.changes >= 2 && y.range > p.range*1.4) return "no";
+  return null;
+}
+
+// Juego de preguntas
+const PRESETS = ["¿Te gusta el chocolate?","¿Has dormido bien hoy?","¿Te gustaría viajar a Japón?","¿Tienes hambre ahora mismo?","¿Prefieres el mar a la montaña?"];
+for (const q of PRESETS){
+  const b = document.createElement("button"); b.textContent = q;
+  b.onclick = ()=>{ $("question").value = q; };
+  $("chips").appendChild(b);
+}
+let asking = null; // {until, question}
+$("ask").onclick = ()=>{
+  const q = $("question").value.trim() || $("question").placeholder;
+  $("question").value = q;
+  asking = { until: performance.now()+6000, q };
+  $("answer").className = "answer"; $("answer").textContent = "";
+  $("askState").textContent = "Esperando tu gesto… (6 s)";
+};
+function handleQuestion(gesture, now){
+  if (!asking) return;
+  const left = Math.ceil((asking.until - now)/1000);
+  if (gesture){
+    const yes = gesture === "si";
+    $("answer").className = "answer " + (yes ? "yes" : "no");
+    $("answer").textContent = yes ? "Tu respuesta: SÍ 👍" : "Tu respuesta: NO 👎";
+    $("askState").textContent = "“" + asking.q + "”";
+    asking = null; poseHist.length = 0;
+  } else if (left <= 0){
+    $("answer").className = "answer"; $("answer").textContent = "No he detectado respuesta 🤔";
+    $("askState").textContent = "Prueba a asentir o negar con más claridad.";
+    asking = null;
+  } else {
+    $("askState").textContent = "Esperando tu gesto… (" + left + " s)";
+  }
+}
+
+// Traduce señales a una frase
+let lastReading = "", lastReadingT = 0;
+function interpret(E, s){
+  const now = performance.now();
+  if (s.gesture === "si") return stick("Estás diciendo que sí con la cabeza.");
+  if (s.gesture === "no") return stick("Estás diciendo que no con la cabeza.");
+  if (s.blinkClosed) return soft("Tienes los ojos cerrados.");
+  const ranked = Object.entries(E).filter(([k])=>k!=="neutral").sort((a,b)=>b[1]-a[1]);
+  const [top, val] = ranked[0];
+  let t;
+  if (val > 0.45){
+    t = {
+      alegria: "Parece que algo te hace gracia o te alegra.",
+      sorpresa: "Pareces sorprendido/a por algo.",
+      enfado: "Tu gesto parece tenso o molesto.",
+      tristeza: "Tu expresión parece algo triste o desanimada.",
+      asco: "Algo parece desagradarte.",
+      concentracion: s.v > 0.2 ? "Pareces estar pensando o intentando recordar algo." : "Pareces muy concentrado/a.",
+    }[top];
+  } else if (s.v > 0.3) t = "Miras hacia arriba: quizá estés pensando en algo.";
+  else if (s.v < -0.35) t = "Miras hacia abajo: quizá estés leyendo o distraído/a.";
+  else if (Math.abs(s.h) > 0.35) t = "Tu mirada se ha ido hacia un lado.";
+  else if (Math.abs(s.roll) > 14) t = "Ladeas la cabeza: ¿curiosidad o duda?";
+  else if (s.bpm !== null && s.bpm > 30) t = "Parpadeas bastante: puede ser cansancio o nervios.";
+  else t = "Expresión tranquila y neutral.";
+  return soft(t);
+
+  function stick(x){ lastReading = x; lastReadingT = now + 1500; return x; }
+  function soft(x){ if (now < lastReadingT) return lastReading; lastReading = x; return x; }
+}
+</script>
+</body>
+</html>
